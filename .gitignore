@@ -218,3 +218,43 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+cat >> .gitignore << 'EOF'
+
+# Node / React
+node_modules/
+dist/
+build/
+.vite/
+npm-debug.log*
+
+# Secrets (never commit these)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Docker / local data
+docker-compose.override.yml
+pgdata/
+prometheus_data/
+grafana_data/
+
+# ML artifacts and datasets
+*.pt
+*.pth
+*.pkl
+data/raw/
+data/generated/
+checkpoints/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+EOF
+
+git add .gitignore
+git commit -m "Extend .gitignore for CloudHeal"
+git push
