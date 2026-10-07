@@ -4,6 +4,7 @@ from cloudheal_control_plane.registry import (
     NodeRecord,
     get_node,
     get_nodes,
+    heartbeat_node,
     register_node,
 )
 
@@ -32,6 +33,15 @@ def nodes():
 @app.get("/nodes/{node_id}", response_model=NodeRecord)
 def node(node_id: str):
     result = get_node(node_id)
+
+    if result is None:
+        return {"detail": "Node not found"}
+
+    return result
+
+@app.post("/nodes/{node_id}/heartbeat", response_model=NodeRecord)
+def heartbeat(node_id: str):
+    result = heartbeat_node(node_id)
 
     if result is None:
         return {"detail": "Node not found"}

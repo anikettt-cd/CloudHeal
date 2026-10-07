@@ -975,3 +975,709 @@ Self-healing infrastructure
 rather than attempting to build the entire cloud platform at once.
 
 This version should be the new baseline context for CloudHeal. The next implementation milestone is heartbeat + last_seen + health state, not another registration feature.
+
+
+Current CloudHeal state
+
+We now have:
+
+Control Plane
+
+* Node registry
+* Node registration
+* last_seen
+* Heartbeat endpoint
+
+Node Agent
+
+* Generates node identity
+* Registers with Control Plane
+* Starts heartbeat loop
+* Sends heartbeat every 10 seconds
+* Stops the heartbeat task on shutdown
+
+This is a good milestone.
+
+I would stop here for this feature
+
+Don’t add failure detection or “offline” status yet. We haven’t defined those semantics in the architecture.
+
+The next logical CloudHeal feature should come from the project architecture rather than immediately adding more heartbeat complexity. We can move to the next component/capability in the actual CloudHeal plan.
+
+Yes. I actually think this is a much better direction for CloudHeal.
+
+The heartbeat work we just finished is useful, but I don’t think the next step should be “add another control-plane feature.” We should start building the actual cloud infrastructure underneath CloudHeal.
+
+Your idea changes the project from:
+
+“Let’s build a cloud-management API.”
+
+into:
+
+“Let’s build our own small private cloud using machines we control, connect those machines into a private network, and then build CloudHeal as the control/orchestration layer on top.”
+
+That is much more interesting—and much more educational.
+
+The architecture I’d propose
+
+Eventually:
+
+                         CLOUDHEAL
+                    Control Plane
+                         │
+              ┌──────────┼──────────┐
+              │          │          │
+           Registry   Scheduler   Services
+              │          │          │
+              └──────────┼──────────┘
+                         │
+                  Private Network
+                 /       |       \
+                /        |        \
+               ▼         ▼         ▼
+          ┌────────┐ ┌────────┐ ┌────────┐
+          │ Node 1 │ │ Node 2 │ │ Node 3 │
+          │ Home A │ │ Home B │ │ Future │
+          └────────┘ └────────┘ └────────┘
+               │          │          │
+               ▼          ▼          ▼
+           Node Agent Node Agent Node Agent
+               │          │          │
+             CPU/RAM    CPU/RAM    CPU/RAM
+             Disk       Disk       Disk
+               │          │          │
+               ▼          ▼          ▼
+            Workloads  Workloads  Workloads
+
+And the important part is that Node 1, Node 2, Node 3 don’t have to be on the same physical LAN.
+
+For example:
+
+                    Private CloudHeal Network
+                            │
+              ┌─────────────┴─────────────┐
+              │                           │
+        Your home Wi-Fi             Another home
+              │                           │
+        Mac / PC / RPi               PC / Server
+              │                           │
+              └─────────── VPN ───────────┘
+
+So even if one machine is behind:
+
+192.168.x.x
+
+and another is behind a completely different home router, CloudHeal can eventually communicate with both through the private overlay network.
+
+⸻
+
+But there’s an important distinction
+
+I would not make CloudHeal responsible for inventing the VPN protocol itself.
+
+We should use an established private networking technology underneath and make CloudHeal operate on top of it.
+
+For example, we could eventually use something like:
+
+Tailscale
+
+or build directly around WireGuard.
+
+But there is an even better learning path:
+
+Phase A
+Understand networking
+        ↓
+Phase B
+Create private node-to-node network
+        ↓
+Phase C
+Make Node Agents communicate over it
+        ↓
+Phase D
+CloudHeal discovers/manages nodes
+        ↓
+Phase E
+Deploy workloads
+        ↓
+Phase F
+Self-healing
+
+We don’t need to hide the networking underneath a magic abstraction.
+
+⸻
+
+This also changes what “Cloud” means for our project
+
+We can build something like:
+
+CloudHeal Private Cloud
+
+Suppose eventually you have:
+
+MacBook
+8 GB RAM
+        │
+        └── Node 1
+Desktop/server
+32 GB RAM
+        │
+        └── Node 2
+Another machine
+16 GB RAM
+        │
+        └── Node 3
+
+CloudHeal sees:
+
+CloudHeal
+│
+├── node-1
+│   ├── 8 GB RAM
+│   ├── 8 CPU threads
+│   └── 200 GB disk
+│
+├── node-2
+│   ├── 32 GB RAM
+│   ├── 16 CPU threads
+│   └── 1 TB disk
+│
+└── node-3
+    ├── 16 GB RAM
+    ├── 12 CPU threads
+    └── 500 GB disk
+
+Then eventually you say:
+
+Deploy video service
+replicas = 2
+memory = 2 GB
+
+CloudHeal decides:
+
+video-api-1 → node-2
+video-api-2 → node-3
+
+And the Node Agents actually execute those workloads.
+
+Now we’re building a cloud.
+
+⸻
+
+And this makes our future services much more meaningful
+
+You previously said you wanted realistic services such as:
+
+* video streaming
+* e-commerce
+* other services
+
+We shouldn’t build those merely as independent FastAPI projects.
+
+Instead:
+
+                    CloudHeal
+                        │
+                  deploy service
+                        │
+            ┌───────────┴───────────┐
+            ▼                       ▼
+      Video Platform          E-commerce
+            │                       │
+       ┌────┴────┐             ┌────┴────┐
+       ▼         ▼             ▼         ▼
+     API      Worker          API      Worker
+       │         │             │         │
+       └─────────┴─────────────┴─────────┘
+                    │
+              CloudHeal nodes
+
+That gives us a reason to build scheduling, networking, service discovery, health monitoring and recovery.
+
+⸻
+
+What I would change in our roadmap
+
+Our old roadmap was:
+
+Registration
+    ↓
+Heartbeat
+    ↓
+Health
+    ↓
+Workload
+    ↓
+Scheduler
+    ↓
+Self-healing
+
+I’d change it to:
+
+                  CLOUDHEAL PRIVATE CLOUD
+1. Infrastructure Networking
+        ↓
+   Private node network
+        ↓
+   Nodes can reach each other
+2. Node Infrastructure
+        ↓
+   Node Agent
+        ↓
+   Identity
+   Resources
+   Heartbeat
+3. Control Plane
+        ↓
+   Node registry
+   Node state
+   Desired state
+4. Workload Runtime
+        ↓
+   Run a process/container
+   Stop it
+   Restart it
+5. CloudHeal Services
+        ↓
+   Deploy service
+   Scale service
+   Service discovery
+6. Scheduler
+        ↓
+   Which node?
+   Based on resources
+7. Monitoring
+        ↓
+   Node + workload health
+8. Self-Healing
+        ↓
+   Failure
+      ↓
+   Detect
+      ↓
+   Recover
+      ↓
+   Reschedule
+9. Real Applications
+        ↓
+   Video streaming
+   E-commerce
+   etc.
+
+This is far more coherent.
+
+⸻
+
+One thing I would NOT do yet
+
+I wouldn’t immediately try to connect your home Wi-Fi to another home over the internet.
+
+First prove:
+
+Mac A
+   │
+   │ private network
+   ▼
+Mac/PC B
+
+with the Node Agents communicating.
+
+Then:
+
+Home A
+   │
+   │ VPN
+   ▼
+Home B
+
+Then CloudHeal operates across both.
+
+That way, if something breaks, we know whether the problem is:
+
+Application
+    ↓
+Node Agent
+    ↓
+CloudHeal
+    ↓
+VPN
+    ↓
+Router/NAT
+
+instead of debugging five layers simultaneously.
+
+⸻
+
+So I agree with your direction
+
+In fact, I’d make this the new central vision:
+
+CloudHeal is a private cloud platform built from ordinary machines connected through a private network, with a Control Plane managing Node Agents, workloads, networking, resources, and eventually self-healing.
+
+The existing Control Plane + Node Agent work doesn’t get thrown away.
+
+It becomes the first layer of the real system:
+
+              ┌──────────────────────────┐
+              │        CloudHeal         │
+              │      Control Plane       │
+              └────────────┬─────────────┘
+                           │
+                    Private Network
+                           │
+          ┌────────────────┼────────────────┐
+          │                │                │
+       Node A           Node B           Node C
+          │                │                │
+      Node Agent       Node Agent       Node Agent
+          │                │                │
+       Workloads        Workloads        Workloads
+
+And this is where I think we should go next: build the private node network first.
+
+Before writing code, though, we should decide what networking model CloudHeal will use and how a node at home joins the CloudHeal private network. That architectural decision will affect the Node Agent, Control Plane address, service discovery, and eventually workload networking.
+
+Yes — I would use Tailscale for CloudHeal’s first real private-cloud networking layer, with one important architectural rule:
+
+Tailscale provides the private network. CloudHeal owns the cloud.
+
+That distinction is important.
+
+Tailscale already gives us encrypted connectivity between machines using WireGuard, NAT traversal, stable tailnet IPs, and optional MagicDNS.  
+
+Why Tailscale fits CloudHeal
+
+Our problem is exactly the annoying part of networking:
+
+Home A
+192.168.x.x
+   │
+   │ NAT
+   ▼
+Internet
+   │
+   │ NAT
+   ▼
+Home B
+192.168.x.x
+
+We don’t want to start by dealing with:
+
+* public IPs
+* port forwarding
+* dynamic IP addresses
+* router configuration
+* CGNAT
+* firewall rules
+* manually maintained WireGuard peers
+
+Tailscale handles the connectivity layer and can establish direct peer connections where possible, falling back to relays when necessary. Connections remain encrypted with WireGuard.  
+
+So instead of our Node Agent registering:
+
+http://192.168.1.49:9000
+
+we can eventually have:
+
+http://cloudheal-control-plane:9000
+
+over the private CloudHeal network.
+
+MagicDNS can provide stable device names instead of making us hard-code Tailscale IP addresses.  
+
+⸻
+
+But here’s the really important architecture
+
+I don’t want CloudHeal to become:
+
+“A FastAPI app that happens to use Tailscale.”
+
+Instead:
+
+                   CloudHeal
+               ┌──────────────┐
+               │ Control Plane│
+               └───────┬──────┘
+                       │
+                CloudHeal logic
+                       │
+          ┌────────────┴────────────┐
+          │                         │
+       Registry                 Scheduler
+          │                         │
+          └────────────┬────────────┘
+                       │
+                Private Network
+                  (Tailscale)
+                       │
+          ┌────────────┼────────────┐
+          │            │            │
+       Node A        Node B       Node C
+          │            │            │
+     Node Agent   Node Agent   Node Agent
+
+Tailscale is underneath CloudHeal.
+
+CloudHeal doesn’t need to implement VPN cryptography, NAT traversal, or tunnel management.
+
+CloudHeal needs to understand:
+
+node_id
+hostname
+private_address
+capacity
+status
+workloads
+
+and eventually:
+
+service
+replicas
+desired_state
+actual_state
+placement
+
+⸻
+
+I’d actually make the network model slightly more explicit
+
+Instead of our current:
+
+"address": get_local_ip()
+
+we eventually want something like:
+
+Node
+├── node_id
+├── hostname
+├── local_address
+├── private_address
+├── resources
+└── status
+
+For example:
+
+node_id:       83a1...
+hostname:      aniket-mac
+local_address: 192.168.1.49
+private_address: 100.x.x.x
+
+The local address is useful for local infrastructure.
+
+The private address is what CloudHeal should use for cross-node communication.
+
+That means our current network.py will eventually evolve from:
+
+get_local_ip()
+
+into something closer to:
+
+get_local_ip()
+get_private_ip()
+
+where the second one comes from the private networking layer.
+
+⸻
+
+And here’s where it gets interesting
+
+Once two CloudHeal nodes can communicate over Tailscale, we can start testing actual distributed infrastructure.
+
+For example:
+
+Node A
+
+Control Plane
+Node Agent
+
+Node B
+
+Node Agent
+
+Then:
+
+Node A
+   │
+   │ CloudHeal private network
+   ▼
+Node B
+
+Node A could ask Node B:
+
+GET /health
+GET /system
+
+Then eventually:
+
+Control Plane
+      │
+      │ deploy
+      ▼
+Node B
+      │
+      ▼
+video-api
+
+And the user accesses the service through the appropriate network path.
+
+That is the beginning of an actual private cloud.
+
+⸻
+
+Should we use Tailscale or raw WireGuard?
+
+For CloudHeal v1, I’d use:
+
+Tailscale
+
+because we want to spend our engineering effort on:
+
+Cloud infrastructure
++
+CloudHeal orchestration
+
+rather than spending the first several weeks building:
+
+VPN key management
+NAT traversal
+peer discovery
+routing
+firewall traversal
+
+Tailscale itself uses WireGuard underneath, so we’re still learning the relevant networking architecture.  
+
+Later, if we want a deeper networking project, we can experiment with a CloudHeal-managed WireGuard layer.
+
+But that should be a later project.
+
+⸻
+
+What about connecting entire home networks?
+
+We don’t need that initially.
+
+Start with:
+
+Device A ── Tailscale ── Device B
+
+Install Tailscale on the actual machines running Node Agents.
+
+Later, if we have:
+
+Home A
+├── Node A
+├── Database
+└── Other machines
+Home B
+├── Node B
+└── Storage
+
+we can introduce subnet routers so a node can expose an entire private subnet to the tailnet. Tailscale explicitly supports this model.  
+
+So our evolution becomes:
+
+Phase 1
+Node ↔ Node
+     ↓
+Tailscale
+Phase 2
+Node ↔ Node
+     ↓
+CloudHeal private network
+Phase 3
+Home network ↔ Home network
+     ↓
+Subnet routers
+Phase 4
+CloudHeal
+     ↓
+Services
+     ↓
+Workloads
+     ↓
+Scheduling
+     ↓
+Self-healing
+
+⸻
+
+One more important thing: don’t make the Control Plane public
+
+This is something I’d strongly recommend.
+
+Don’t do:
+
+Internet
+   │
+   ▼
+Control Plane :9000
+
+Instead:
+
+                 Tailscale
+                    │
+        ┌───────────┴───────────┐
+        │                       │
+ Control Plane              Node Agents
+        │                       │
+     :9000                   :8000
+
+The Control Plane should initially be private infrastructure.
+
+Only machines that are part of our private network should be able to communicate with it.
+
+Later we can deliberately expose selected application services.
+
+That gives us a clean separation:
+
+Private infrastructure plane
+        │
+        ├── Control Plane
+        ├── Node Agents
+        ├── internal APIs
+        └── databases
+Public application plane
+        │
+        ├── video website
+        ├── e-commerce website
+        └── other services
+
+That is much closer to how I would want CloudHeal to evolve.
+
+⸻
+
+So I’d lock in this decision
+
+Networking model for CloudHeal v1:
+
+Tailscale-based private overlay network, with WireGuard underneath. CloudHeal operates above the network and does not manage VPN mechanics initially.
+
+And the next milestone should therefore be:
+
+             CURRENT
+                │
+                ▼
+       Node Agent + Control Plane
+                │
+                ▼
+       Install Tailscale
+                │
+                ▼
+       Node A ↔ Node B
+                │
+                ▼
+      Verify private connectivity
+                │
+                ▼
+   Change CloudHeal communication
+      to use private addresses
+                │
+                ▼
+       Multi-node CloudHeal
+
+This is the direction I’d take.
+
+⁠Tailscale documentation
+
+If we proceed, our next task should not be coding. First we’ll set up two machines as CloudHeal nodes, verify their Tailscale connectivity, understand exactly what addresses/DNS names CloudHeal should use, and then modify the Node Agent accordingly.
