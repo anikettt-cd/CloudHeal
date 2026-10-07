@@ -1,26 +1,12 @@
 [project]
 name = "cloudheal"
 version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-authors = [
-    { name = "anikettt-cd", email = "sainianiket751@gmail.com" }
-]
+description = "CloudHeal cloud platform"
 requires-python = ">=3.11"
-dependencies = [
-    "fastapi>=0.142.2",
-    "uvicorn>=0.54.0",
-]
-
-[project.scripts]
-cloudheal = "cloudheal:main"
-
-[build-system]
-requires = ["uv_build>=0.12.23,<0.13.0"]
-build-backend = "uv_build"
+dependencies = []
 
 [tool.uv.workspace]
 members = [
-    "services/*",
-    "demo-services/*",
+    "infrastructure/node-agent",
+    "control-plane"
 ]

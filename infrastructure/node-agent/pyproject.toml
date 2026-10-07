@@ -1,19 +1,18 @@
 [project]
-name = "shop-api"
+name = "cloudheal-node-agent"
 version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-authors = [
-    { name = "anikettt-cd", email = "sainianiket751@gmail.com" }
-]
+description = "CloudHeal node agent"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.142.2",
+    "httpx>=0.28.1",
+    "psutil>=7.0.0",
+    "pydantic>=2.13.5",
     "uvicorn>=0.54.0",
 ]
 
 [project.scripts]
-shop-api = "shop_api:main"
+cloudheal-node-agent = "cloudheal_node_agent.main:main"
 
 [build-system]
 requires = ["uv_build>=0.12.23,<0.13.0"]

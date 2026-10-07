@@ -1,249 +1,977 @@
-# CloudHeal Project Context
+Absolutely. This should become the new source of truth for the project, reflecting the architecture after automatic Node Agent registration and before we start heartbeat/self-healing.
 
-## Current project
-CloudHeal is a self-healing infrastructure / service-reliability project. The goal is to build a system that can observe a customer service, detect failures, investigate them, take a recovery action, and verify that the service recovered.
+CloudHeal — Project Context
 
-Core lifecycle:
+1. Project Overview
 
-Customer Service (Shop API)
-        ↓
-Observe / Monitor
-        ↓
-Detector
-        ↓
-Diagnosis / Decision
-        ↓
-Executor
-        ↓
-Verifier
-        ↓
-Recovered / confirmed
+CloudHeal is an infrastructure/cloud platform project being built from scratch.
 
-The Shop API is the demo customer workload. The complexity should primarily live in CloudHeal, not in the demo API.
+The goal is to understand and implement the core building blocks behind a cloud/infrastructure platform rather than simply building another CRUD application.
 
-## Development preferences
-- Implementation-first teaching.
-- Explain important code, libraries, APIs, architecture, and data flow before or alongside implementation.
-- Do not turn this into a generic FastAPI tutorial.
-- Avoid unnecessary theory and unnecessary toy experiments.
-- Move step-by-step and test each stage before progressing.
-- Keep the Shop API deliberately small; it exists to give CloudHeal a realistic service to observe and break.
-- Do not lose the existing project structure or recreate the workspace from scratch.
+The long-term direction is:
 
-## Current root structure
+CloudHeal
+│
+├── Control Plane
+│   ├── Node registry
+│   ├── Node health/heartbeat
+│   ├── Workload/service management
+│   ├── Scheduling/orchestration
+│   ├── Monitoring
+│   └── Self-healing
+│
+├── Infrastructure
+│   └── Node Agent
+│       ├── Identity
+│       ├── Network information
+│       ├── System information
+│       ├── Registration
+│       ├── Heartbeat
+│       └── Future workload execution
+│
+├── Services / Workloads
+│   ├── Video streaming service
+│   ├── E-commerce service
+│   └── Other realistic cloud workloads
+│
+└── Future Platform Features
+    ├── Service deployment
+    ├── Resource management
+    ├── Health monitoring
+    ├── Failure detection
+    ├── Recovery
+    └── Self-healing
+
+The project is intentionally being built incrementally.
+
+We should not jump directly into Kubernetes-level complexity.
+
+The project should first establish a small but real infrastructure platform and then progressively add capabilities.
+
+⸻
+
+2. Current Architecture
+
+CloudHeal currently has two working components:
+
+CloudHeal
+│
+├── control-plane/
+│
+└── infrastructure/
+    └── node-agent/
+
+The current architecture is:
+
+                    CloudHeal
+                       │
+          ┌────────────┴────────────┐
+          │                         │
+          ▼                         ▼
+   Node Agent :8000         Control Plane :9000
+          │                         │
+          │ startup                 │
+          ▼                         │
+      FastAPI lifespan             │
+          │                         │
+          ▼                         │
+    registration.py ───────────────►│
+          │                         │
+          ├── identity.py           │
+          │                         ▼
+          │                    registry.py
+          │
+          └── network.py
+
+The Node Agent automatically registers itself with the Control Plane when it starts.
+
+⸻
+
+3. Current Repository Structure
+
+Current relevant structure:
 
 CloudHeal/
+│
+├── CloudHeal_CONTEXT.md
 ├── README.md
-├── demo-services/
-│   └── shop-api/
-│       ├── README.md
-│       ├── pyproject.toml
-│       └── src/
-│           └── shop_api/
-│               ├── __init__.py
-│               └── main.py
-├── docker-compose.yml
-├── docs/
-│   └── SPEC-001-cloudheal.md
-├── monitoring/
-│   ├── grafana/
-│   └── prometheus/
-├── pyproject.toml
-├── services/
-│   ├── cloudheal-api/
-│   ├── detector/
-│   ├── executor/
-│   ├── fault-injector/
-│   └── verifier/
-└── uv.lock
+│
+├── control-plane/
+│   ├── pyproject.toml
+│   │
+│   └── src/
+│       └── cloudheal_control_plane/
+│           ├── __init__.py
+│           ├── api.py
+│           ├── main.py
+│           └── registry.py
+│
+└── infrastructure/
+    └── node-agent/
+        ├── pyproject.toml
+        │
+        └── src/
+            └── cloudheal_node_agent/
+                ├── __init__.py
+                ├── api.py
+                ├── identity.py
+                ├── main.py
+                ├── models.py
+                ├── network.py
+                ├── registration.py
+                └── system.py
 
-Important: monitoring/ directories exist but currently contain no files, and docker-compose.yml is currently empty.
+__pycache__ and .pyc files may exist locally but are not part of the source architecture.
 
-## uv workspace
-CloudHeal uses a uv workspace.
+They should eventually be ignored through .gitignore.
 
-There is ONE root lockfile:
-    CloudHeal/uv.lock
+⸻
 
-Do NOT create separate uv.lock files inside individual services.
+4. Control Plane
 
-The intended root workspace configuration is:
+Location:
 
-[tool.uv.workspace]
-members = [
-    "services/*",
-    "demo-services/*",
+control-plane/
+
+Package:
+
+cloudheal_control_plane
+
+The Control Plane is currently the central authority that knows which nodes have registered.
+
+4.1 Control Plane Files
+
+api.py
+
+Contains the FastAPI application.
+
+Current responsibilities:
+
+* /health
+* /nodes/register
+* /nodes
+* /nodes/{node_id}
+
+The FastAPI app is defined here:
+
+app = FastAPI(
+    title="CloudHeal Control Plane",
+    version="0.1.0",
+)
+
+The application is therefore started with:
+
+uvicorn cloudheal_control_plane.api:app
+
+However, the preferred project command is currently:
+
+uv run --package cloudheal-control-plane cloudheal-control-plane
+
+The packaged Control Plane currently runs on:
+
+http://0.0.0.0:9000
+
+⸻
+
+4.2 registry.py
+
+The registry currently contains:
+
+class NodeRecord(BaseModel):
+    node_id: str
+    hostname: str
+    address: str
+    status: str = "healthy"
+
+The registry is currently an in-memory dictionary:
+
+_nodes: dict[str, NodeRecord] = {}
+
+Registration:
+
+def register_node(node: NodeRecord) -> NodeRecord:
+    _nodes[node.node_id] = node
+    return node
+
+Retrieval:
+
+def get_nodes() -> list[NodeRecord]:
+    return list(_nodes.values())
+
+Individual lookup:
+
+def get_node(node_id: str) -> NodeRecord | None:
+    return _nodes.get(node_id)
+
+Important
+
+This is intentionally simple for now.
+
+The registry is not persistent.
+
+If the Control Plane process restarts, the in-memory node registry disappears.
+
+Persistence will be introduced later when it becomes necessary.
+
+⸻
+
+5. Current Control Plane API
+
+The Control Plane currently exposes:
+
+Health
+
+GET /health
+
+Expected:
+
+{
+  "status": "ok"
+}
+
+⸻
+
+Register Node
+
+POST /nodes/register
+
+Expected request structure:
+
+{
+  "node_id": "...",
+  "hostname": "...",
+  "address": "...",
+  "status": "healthy"
+}
+
+The endpoint stores the node through:
+
+api.py
+   ↓
+registry.py
+   ↓
+register_node()
+
+⸻
+
+List Nodes
+
+GET /nodes
+
+Example current result:
+
+[
+  {
+    "node_id": "83a1f6f3-9bbc-4e1f-8566-5080aef7d7ed",
+    "hostname": "MacBookAir",
+    "address": "192.168.31.46",
+    "status": "healthy"
+  }
 ]
 
-Each independent service should have its own pyproject.toml while uv manages the workspace with the root lockfile.
+⸻
 
-The root project currently originated from uv init and has FastAPI/Uvicorn dependencies and a project script. Do not blindly redesign/remove the root project configuration unless that becomes necessary.
+Get Node
 
-## Shop API purpose
-Shop API is the first real customer/demo service that CloudHeal will eventually break, detect, recover, and verify.
+GET /nodes/{node_id}
 
-The API is intentionally simple. We are NOT building a complete e-commerce system.
+Returns a specific registered node.
 
-Current endpoints:
-- GET /health
-- GET /products
-- GET /products/{product_id}
+⸻
 
-## Shop API dependencies
+6. Node Agent
 
-demo-services/shop-api/pyproject.toml currently contains:
+Location:
 
-[project]
-name = "shop-api"
-version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-authors = [
-    { name = "anikettt-cd", email = "sainianiket751@gmail.com" }
+infrastructure/node-agent/
+
+Package:
+
+cloudheal_node_agent
+
+The Node Agent represents a machine/node participating in CloudHeal.
+
+It is intended to eventually run on infrastructure machines and communicate with the Control Plane.
+
+Current packaged startup command:
+
+uv run --package cloudheal-node-agent cloudheal-node-agent
+
+Current port:
+
+http://0.0.0.0:8000
+
+⸻
+
+7. Node Agent Identity
+
+File:
+
+infrastructure/node-agent/src/cloudheal_node_agent/identity.py
+
+Current implementation creates a persistent UUID for the node.
+
+Identity file:
+
+~/.cloudheal/node_id
+
+Behavior:
+
+Node Agent starts
+      │
+      ▼
+Does ~/.cloudheal/node_id exist?
+      │
+   ┌──┴──┐
+   │     │
+  yes    no
+   │     │
+   ▼     ▼
+load   generate UUID
+         │
+         ▼
+   save to disk
+
+Current function:
+
+def get_node_id() -> str:
+
+This gives the node a stable identity across Node Agent restarts.
+
+⸻
+
+8. Node Agent Network Information
+
+File:
+
+infrastructure/node-agent/src/cloudheal_node_agent/network.py
+
+Current function:
+
+def get_local_ip() -> str:
+
+It determines the local IPv4 address using a UDP socket.
+
+Current test produced:
+
+192.168.31.46
+
+The address is no longer hardcoded into registration.
+
+This was an important correction.
+
+Previously registration contained a hardcoded address.
+
+Current implementation uses:
+
+"address": get_local_ip()
+
+Therefore the Node Agent can run on different machines without changing the source code.
+
+⸻
+
+9. Node Agent Registration
+
+File:
+
+infrastructure/node-agent/src/cloudheal_node_agent/registration.py
+
+Current responsibilities:
+
+* obtain persistent node ID
+* obtain hostname
+* obtain local IP
+* create registration payload
+* send registration request to Control Plane
+* fail if the HTTP request fails
+
+Current payload:
+
+payload = {
+    "node_id": get_node_id(),
+    "hostname": get_hostname(),
+    "address": get_local_ip(),
+    "status": "healthy",
+}
+
+Registration endpoint:
+
+POST /nodes/register
+
+Current Control Plane URL:
+
+http://127.0.0.1:9000
+
+The function:
+
+register_with_control_plane(control_plane_url: str)
+
+uses httpx.
+
+Current behavior:
+
+Node Agent
+   │
+   ├── get_node_id()
+   │
+   ├── get_hostname()
+   │
+   └── get_local_ip()
+            │
+            ▼
+      registration payload
+            │
+            ▼
+ POST http://127.0.0.1:9000/nodes/register
+            │
+            ▼
+      Control Plane
+
+The registration flow has been successfully tested.
+
+⸻
+
+10. Automatic Registration on Startup
+
+This is the latest completed implementation.
+
+File:
+
+infrastructure/node-agent/src/cloudheal_node_agent/api.py
+
+The Node Agent now uses FastAPI’s lifespan mechanism.
+
+Current architecture:
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    register_with_control_plane(CONTROL_PLANE_URL)
+    yield
+
+The FastAPI app uses:
+
+app = FastAPI(
+    title="CloudHeal Node Agent",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+Therefore the Node Agent automatically registers during application startup.
+
+The registration no longer needs to be manually triggered.
+
+⸻
+
+11. Current Node Agent API
+
+The Node Agent exposes:
+
+Health
+
+GET /health
+
+Returns:
+
+{
+  "status": "ok"
+}
+
+⸻
+
+Identity
+
+GET /identity
+
+Returns:
+
+{
+  "node_id": "..."
+}
+
+⸻
+
+System
+
+GET /system
+
+Returns system information obtained from:
+
+system.py
+
+⸻
+
+12. Node Agent Startup Flow
+
+The current real startup flow is:
+
+uv run --package cloudheal-node-agent cloudheal-node-agent
+                         │
+                         ▼
+                      main.py
+                         │
+                         ▼
+                  FastAPI application
+                         │
+                         ▼
+                     lifespan()
+                         │
+                         ▼
+              register_with_control_plane()
+                         │
+              ┌──────────┴──────────┐
+              ▼                     ▼
+        identity.py             network.py
+              │                     │
+              ▼                     ▼
+          node_id                local IP
+              │                     │
+              └──────────┬──────────┘
+                         ▼
+                  registration
+                         │
+                         ▼
+                Control Plane :9000
+                         │
+                         ▼
+                     registry
+                         │
+                         ▼
+                  startup complete
+                         │
+                         ▼
+              Node Agent serves :8000
+
+This flow has been successfully verified.
+
+⸻
+
+13. Verified End-to-End Registration
+
+The registration flow was manually tested first.
+
+The Node Agent produced:
+
+IP: 192.168.31.46
+
+Then registration was performed against:
+
+http://127.0.0.1:9000
+
+The Control Plane returned:
+
+POST /nodes/register → 200 OK
+
+The registry returned:
+
+[
+  {
+    "node_id": "83a1f6f3-9bbc-4e1f-8566-5080aef7d7ed",
+    "hostname": "MacBookAir",
+    "address": "192.168.31.46",
+    "status": "healthy"
+  }
 ]
-requires-python = ">=3.11"
-dependencies = [
-    "fastapi>=0.142.2",
-    "uvicorn>=0.54.0",
-]
 
-[project.scripts]
-shop-api = "shop_api:main"
+Automatic startup registration was subsequently implemented and verified.
 
-[build-system]
-requires = ["uv_build>=0.12.23,<0.13.0"]
-build-backend = "uv_build"
+The Control Plane logs showed:
 
-FastAPI and Uvicorn were added using:
-    uv add --package shop-api fastapi uvicorn
+POST /nodes/register HTTP/1.1" 200 OK
 
-## Current Shop API implementation
+when the Node Agent started.
 
-demo-services/shop-api/src/shop_api/main.py:
+Therefore the current registration lifecycle is working.
 
-from fastapi import FastAPI, HTTPException
+⸻
 
-app = FastAPI(title="Shop API")
+14. Current Ports
 
+Important local development ports:
 
-products = [
-    {
-        "id": 1,
-        "name": "Laptop",
-        "price": 75000,
-    },
-    {
-        "id": 2,
-        "name": "Keyboard",
-        "price": 2500,
-    },
-    {
-        "id": 3,
-        "name": "Mouse",
-        "price": 1200,
-    },
-]
+Node Agent
+    :8000
+Control Plane
+    :9000
 
+There was temporarily another Control Plane instance running on:
 
-@app.get("/health")
-def health():
-    return {"status": "healthy"}
+:8001
 
+using:
 
-@app.get("/products")
-def get_products():
-    return products
+uv run --package cloudheal-control-plane uvicorn cloudheal_control_plane.api:app --host 0.0.0.0 --port 8001
 
+This was only a duplicate development instance and was stopped.
 
-@app.get("/products/{product_id}")
-def get_product(product_id: int):
-    for product in products:
-        if product["id"] == product_id:
-            return product
+The canonical current Control Plane port is:
 
-    raise HTTPException(
-        status_code=404,
-        detail="Product not found",
-    )
+9000
 
-## Shop API behavior already verified
+Do not introduce another Control Plane process on 8001 unless specifically required.
 
-The API is run from the CloudHeal root with:
+⸻
 
-    uv run --package shop-api uvicorn shop_api.main:app --reload
+15. Current Dependencies
 
-Health test completed successfully:
+The Node Agent currently uses:
 
-    curl http://127.0.0.1:8000/health
+* FastAPI
+* Uvicorn
+* httpx
+* psutil
 
-Response:
+psutil was added to the Node Agent package for system information.
 
-    {"status":"healthy"}
+The Control Plane currently uses:
 
-The /products endpoint was implemented and tested.
+* FastAPI
+* Uvicorn
+* Pydantic
 
-The /products/{product_id} endpoint was implemented and the following tests were completed:
-- Existing product IDs return the product.
-- A non-existent product returns HTTP 404.
-- Invalid path parameters are handled by FastAPI validation.
+The project uses uv for package and dependency management.
 
-The Shop API feature set is now considered COMPLETE for the current phase.
+⸻
 
-## Important architecture distinction
-/health currently means the Shop API process is alive and can respond to HTTP requests. It is not intended to prove every dependency is healthy.
+16. Current Engineering Philosophy
 
-A missing product returning 404 is normal application behavior, not a service failure.
+CloudHeal is being developed incrementally.
 
-This distinction will matter when CloudHeal starts detecting real service failures.
+Important rules:
 
-## What should happen next
+Do not over-engineer early
 
-STOP adding normal Shop API features.
+We should first make small real infrastructure capabilities work.
 
-The next phase is the actual CloudHeal functionality:
+Avoid immediately introducing:
 
-1. Introduce controlled faults into the Shop API / demo environment.
-2. Observe the service and collect signals.
-3. Build the Detector.
-4. Determine whether an observed problem is an actual service fault.
-5. Build the Executor to take a recovery action.
-6. Build the Verifier to confirm recovery.
-7. Later integrate Prometheus/Grafana and other monitoring infrastructure as appropriate.
+* Kubernetes
+* Docker orchestration
+* service meshes
+* distributed consensus
+* complex databases
+* message queues
+* advanced schedulers
 
-Expected high-level flow:
+unless they become necessary.
 
-Normal Shop API
-    ↓
-Controlled fault injection
-    ↓
-Service degradation/failure
-    ↓
-CloudHeal observes it
-    ↓
-Detector identifies abnormal/fault state
-    ↓
-Executor performs recovery
-    ↓
-Verifier checks the Shop API
-    ↓
-Recovery confirmed
+Prefer real implementations
 
-## Current state summary
-- uv workspace: set up
-- root uv.lock: present
-- shop-api workspace member: present
-- FastAPI dependency: installed
-- Uvicorn dependency: installed
-- Shop API /health: DONE and verified
-- Shop API /products: DONE and verified
-- Shop API /products/{product_id}: DONE and verified
-- Shop API feature work: STOP HERE
-- monitoring config: NOT implemented yet
-- docker-compose: currently empty
-- next focus: CloudHeal failure injection → detection → recovery → verification
+Each feature should eventually represent a real infrastructure concept.
 
-## Key project principle
-The Shop API is the workload.
-CloudHeal is the product.
+For example:
 
-Do not spend time turning Shop API into a large application. Build enough realistic behavior to give CloudHeal something meaningful to observe and fail, then focus development effort on the self-healing system.
+registration
+heartbeat
+health detection
+workload placement
+failure detection
+recovery
+
+are more valuable than building many unrelated CRUD endpoints.
+
+Keep responsibilities separated
+
+Current separation:
+
+identity.py
+    → node identity
+network.py
+    → network information
+system.py
+    → system information
+registration.py
+    → Control Plane registration
+api.py
+    → Node Agent HTTP API
+main.py
+    → Node Agent process startup
+
+Control Plane:
+
+api.py
+    → HTTP interface
+registry.py
+    → node registry/state
+main.py
+    → process startup
+
+⸻
+
+17. What Is NOT Implemented Yet
+
+The following are intentionally not implemented yet:
+
+❌ Persistent Control Plane database
+❌ Node heartbeat
+❌ last_seen tracking
+❌ Failure detection
+❌ Node timeout handling
+❌ Automatic unhealthy status
+❌ Workload/service deployment
+❌ Scheduler
+❌ Resource allocation
+❌ Service discovery
+❌ Load balancing
+❌ Container management
+❌ Self-healing actions
+❌ Multi-node orchestration
+❌ Authentication/authorization
+
+These will be added progressively.
+
+⸻
+
+18. Immediate Next Feature
+
+The next feature should be:
+
+Node Heartbeat
+
+Registration currently proves:
+
+"The node was alive when it registered."
+
+It does not prove:
+
+"The node is still alive now."
+
+Therefore the next architecture should introduce heartbeat reporting.
+
+Target:
+
+Node Agent
+    │
+    │ heartbeat every N seconds
+    ▼
+Control Plane
+    │
+    ├── node_id
+    ├── status
+    └── last_seen
+
+Eventually:
+
+healthy
+   │
+   │ heartbeat stops
+   ▼
+suspect
+   │
+   │ timeout
+   ▼
+unhealthy
+   │
+   ▼
+CloudHeal recovery logic
+
+⸻
+
+19. Planned Heartbeat Architecture
+
+The likely next change will be to extend the node record with something similar to:
+
+node_id
+hostname
+address
+status
+last_seen
+
+The Control Plane will expose a heartbeat endpoint, conceptually:
+
+POST /nodes/{node_id}/heartbeat
+
+The Node Agent will periodically call it.
+
+The exact implementation should be designed before coding.
+
+Do not immediately add arbitrary background threads or complex async infrastructure.
+
+First establish:
+
+1. What heartbeat payload is required.
+2. How last_seen is stored.
+3. How the Control Plane determines stale nodes.
+4. What status transitions are required.
+5. How the Node Agent should handle Control Plane unavailability.
+
+⸻
+
+20. Future CloudHeal Evolution
+
+The expected progression is:
+
+PHASE 1
+Node Identity
+      ↓
+Node Registration
+      ↓
+Node Heartbeat
+      ↓
+Node Health Detection
+PHASE 2
+Resource Monitoring
+      ↓
+CPU / Memory / Disk
+      ↓
+Node Capacity
+PHASE 3
+Workload Model
+      ↓
+Services
+      ↓
+Deploy workload to node
+PHASE 4
+Scheduling
+      ↓
+Choose suitable node
+      ↓
+Place workload
+PHASE 5
+Monitoring
+      ↓
+Detect workload failure
+      ↓
+Detect node failure
+PHASE 6
+Self-Healing
+      ↓
+Restart workload
+      ↓
+Move workload
+      ↓
+Recover service
+PHASE 7
+Real Cloud Services
+      ↓
+Video Streaming
+E-commerce
+Other services
+
+⸻
+
+21. Current Project State
+
+At this exact point:
+
+┌─────────────────────────────────────────────┐
+│                CloudHeal                    │
+│                                             │
+│  Control Plane :9000                       │
+│       │                                     │
+│       │ node registration                  │
+│       ▲                                     │
+│       │                                     │
+│  Node Agent :8000                          │
+│       │                                     │
+│       ├── persistent identity              │
+│       ├── hostname                         │
+│       ├── local network address            │
+│       ├── system information               │
+│       └── automatic startup registration   │
+│                                             │
+└─────────────────────────────────────────────┘
+
+Completed
+
+* CloudHeal repository structure
+* Control Plane package
+* Node Agent package
+* Node identity
+* Persistent node UUID
+* Local IP detection
+* Hostname detection
+* Node registration API
+* In-memory node registry
+* Node Agent API
+* System information endpoint
+* HTTP communication using httpx
+* Node Agent → Control Plane registration
+* Automatic registration during Node Agent startup
+* Verified registration end-to-end
+
+Current milestone
+
+Node Agent registration is complete.
+
+Next milestone
+
+Heartbeat + node health tracking.
+
+⸻
+
+22. Important Current Commands
+
+Start Control Plane
+
+uv run --package cloudheal-control-plane cloudheal-control-plane
+
+Runs on:
+
+http://127.0.0.1:9000
+
+Start Node Agent
+
+uv run --package cloudheal-node-agent cloudheal-node-agent
+
+Runs on:
+
+http://127.0.0.1:8000
+
+Check Control Plane
+
+curl http://127.0.0.1:9000/health
+
+Check registered nodes
+
+curl http://127.0.0.1:9000/nodes
+
+Check Node Agent
+
+curl http://127.0.0.1:8000/health
+
+Check Node Identity
+
+curl http://127.0.0.1:8000/identity
+
+Check Node System Information
+
+curl http://127.0.0.1:8000/system
+
+⸻
+
+23. Development Rule Going Forward
+
+Before implementing each new CloudHeal feature:
+
+1. Understand the infrastructure concept.
+2. Decide which component owns the responsibility.
+3. Keep the API/data model minimal.
+4. Implement the smallest real version.
+5. Run it locally.
+6. Verify the behavior.
+7. Update this context file.
+8. Move to the next infrastructure capability.
+
+The project should evolve from:
+
+Node registration
+
+to:
+
+Node awareness
+
+to:
+
+Node health
+
+to:
+
+Workload management
+
+to:
+
+Self-healing infrastructure
+
+rather than attempting to build the entire cloud platform at once.
+
+This version should be the new baseline context for CloudHeal. The next implementation milestone is heartbeat + last_seen + health state, not another registration feature.
