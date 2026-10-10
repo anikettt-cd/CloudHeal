@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from cloudheal_node_agent.runtime_info import get_runtime_info
 from cloudheal_node_agent.heartbeat import heartbeat_loop
 from cloudheal_node_agent.identity import get_node_id
 from cloudheal_node_agent.registration import register_with_control_plane
@@ -14,7 +14,7 @@ from cloudheal_node_agent.runtime import (
 )
 from cloudheal_node_agent.workload_models import ContainerRunRequest
 
-CONTROL_PLANE_URL = "http://100.90.104.13:9000"
+CONTROL_PLANE_URL = "http://127.0.0.1:9000"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -68,3 +68,8 @@ def create_container(request: ContainerRunRequest):
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+        
+@app.get("/runtime")
+def runtime():
+    return get_runtime_info()        
+        

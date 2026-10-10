@@ -1,5 +1,7 @@
 from uuid import UUID
+from typing import Any
 
+from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, status
 
 from cloudheal_control_plane.registry import (
@@ -24,6 +26,10 @@ app = FastAPI(
     title="CloudHeal Control Plane",
     version="0.1.0",
 )
+
+class NodeHeartbeat(BaseModel):
+    system_info: dict[str, Any] | None = None
+    runtime_info: dict[str, Any] | None = None
 
 # Shared workload-management instances.
 workload_registry = WorkloadRegistry()
@@ -62,14 +68,19 @@ def node(node_id: str):
 
 
 @app.post("/nodes/{node_id}/heartbeat", response_model=NodeRecord)
-def heartbeat(node_id: str):
-    result = heartbeat_node(node_id)
+def heartbeat(node_id: str, request: NodeHeartbeat):
+    result = heartbeat_node(
+        node_id,
+        system_info=request.system_info,
+        runtime_info=request.runtime_info,
+    )
 
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Node not found",
         )
+
     return result
 
 
