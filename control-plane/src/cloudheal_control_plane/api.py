@@ -19,6 +19,7 @@ from cloudheal_control_plane.workloads.registry import WorkloadRegistry
 from cloudheal_control_plane.workloads.service import WorkloadService
 
 from cloudheal_control_plane.workloads.scheduler import (
+    ExecutionError,
     SchedulingError,
     WorkloadScheduler,
 )
@@ -119,15 +120,19 @@ def get_workload(workload_id: UUID):
 def schedule_workload(workload_id: UUID):
     try:
         return workload_scheduler.schedule(workload_id)
-
     except LookupError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
-
+    except ExecutionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
     except SchedulingError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+

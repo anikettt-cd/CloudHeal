@@ -64,9 +64,14 @@ def create_container(request: ContainerRunRequest):
             memory_limit_mb=request.memory_limit_mb,
         )
     except ContainerExecutionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
+       message = str(exc)
+       if message.startswith("Container already exists"):
+            status_code = status.HTTP_409_CONFLICT
+       else:
+           status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+       raise HTTPException(
+          status_code=status_code,
+          detail=message,
         ) from exc
         
 @app.get("/runtime")

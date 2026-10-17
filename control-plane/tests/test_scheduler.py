@@ -14,6 +14,10 @@ from cloudheal_control_plane.workloads.scheduler import (
     WorkloadScheduler,
 )
 from cloudheal_control_plane.workloads.service import WorkloadService
+from cloudheal_control_plane.workloads.scheduler import (
+    ExecutionError,
+    SchedulingError,
+)
 
 
 @pytest.fixture
@@ -127,40 +131,25 @@ def test_unhealthy_node_rejected(
     assert workload.actual_state == WorkloadState.PENDING
     
 @patch("cloudheal_control_plane.workloads.scheduler.httpx.post")
-
 @patch("cloudheal_control_plane.workloads.scheduler.get_nodes")
-
 def test_execution_failure_marks_workload_failed(
-
     mock_get_nodes, mock_post, setup_scheduler
-
 ):
-
     scheduler, workload, node = setup_scheduler
 
     mock_get_nodes.return_value = [node]
 
-    mock_post.side_effect = __import__(
-
-        "httpx"
-
-    ).HTTPStatusError(
-
+    mock_post.side_effect = __import__("httpx").HTTPStatusError(
         "Container execution failed",
-
         request=Mock(),
-
         response=Mock(status_code=409),
-
     )
 
-    with pytest.raises(SchedulingError, match="execution request failed"):
-
+    with pytest.raises(ExecutionError, match="execution request failed"):
         scheduler.schedule(workload.workload_id)
 
     assert workload.actual_state == WorkloadState.FAILED
-
-    assert workload.node_id is not None    
+    assert workload.node_id is not None 
 
 @patch("cloudheal_control_plane.workloads.scheduler.httpx.post")
 @patch("cloudheal_control_plane.workloads.scheduler.get_nodes")

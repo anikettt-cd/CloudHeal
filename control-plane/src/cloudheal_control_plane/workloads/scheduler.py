@@ -11,6 +11,9 @@ from cloudheal_control_plane.workloads.service import WorkloadService
 class SchedulingError(Exception):
     pass
 
+class ExecutionError(Exception):
+    pass
+
 
 class WorkloadScheduler:
 
@@ -155,7 +158,7 @@ class WorkloadScheduler:
 
         except httpx.HTTPError as exc:
             workload.actual_state = WorkloadState.FAILED
-            raise SchedulingError(
+            raise ExecutionError(
                 f"Node Agent execution request failed: {exc}"
             ) from exc
 
