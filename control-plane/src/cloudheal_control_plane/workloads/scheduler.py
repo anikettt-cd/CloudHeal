@@ -3,7 +3,7 @@ from uuid import UUID
 
 import httpx
 
-from cloudheal_control_plane.registry import get_nodes
+from cloudheal_control_plane.registry import NodeRecord, get_nodes
 from cloudheal_control_plane.workloads.models import WorkloadState
 from cloudheal_control_plane.workloads.service import WorkloadService
 
@@ -11,12 +11,12 @@ from cloudheal_control_plane.workloads.service import WorkloadService
 class SchedulingError(Exception):
     pass
 
+
 class ExecutionError(Exception):
     pass
 
 
 class WorkloadScheduler:
-
     def __init__(self, workload_service: WorkloadService) -> None:
         self.workload_service = workload_service
 
@@ -26,7 +26,10 @@ class WorkloadScheduler:
         if workload is None:
             raise LookupError("Workload not found")
 
-        if workload.actual_state != WorkloadState.PENDING:
+        if workload.actual_state not in {
+            WorkloadState.PENDING,
+            WorkloadState.FAILED,
+        }:
             raise SchedulingError(
                 f"Cannot schedule workload in state {workload.actual_state}"
             )
@@ -71,26 +74,35 @@ class WorkloadScheduler:
                 w.cpu_limit
                 for w in active_workloads
                 if str(w.node_id) == str(node.node_id)
-                and w.actual_state in {
+                and w.actual_state
+                in {
                     WorkloadState.SCHEDULED,
                     WorkloadState.RUNNING,
                 }
             )
+
             allocated_memory_bytes = sum(
                 w.memory_limit_mb * 1024 * 1024
                 for w in active_workloads
                 if str(w.node_id) == str(node.node_id)
-                and w.actual_state in {
+                and w.actual_state
+                in {
                     WorkloadState.SCHEDULED,
                     WorkloadState.RUNNING,
                 }
             )
+
             available_cpu = cpu_count - allocated_cpu
-            available_memory_bytes = memory_bytes - allocated_memory_bytes
+            available_memory_bytes = (
+                memory_bytes - allocated_memory_bytes
+            )
+
             if available_cpu < workload.cpu_limit:
                 continue
+
             if available_memory_bytes < required_memory_bytes:
                 continue
+
             eligible_nodes.append(node)
 
         if not eligible_nodes:
@@ -99,38 +111,53 @@ class WorkloadScheduler:
                 "and memory capacity"
             )
 
-        def remaining_capacity(node):
-            allocated_workloads = [
-                w
+        def remaining_capacity(node: NodeRecord) -> float:
+            runtime = node.runtime_info
+
+            cpu_count = float(runtime["cpu_count"])
+            memory_bytes = int(runtime["memory_bytes"])
+
+            allocated_cpu = sum(
+                w.cpu_limit
                 for w in active_workloads
                 if str(w.node_id) == str(node.node_id)
-                and w.actual_state in {
+                and w.actual_state
+                in {
                     WorkloadState.SCHEDULED,
                     WorkloadState.RUNNING,
                 }
-            ]
-            allocated_cpu = sum(w.cpu_limit for w in allocated_workloads)
-            allocated_memory = sum(
-                w.memory_limit_mb * 1024 * 1024
-                for w in allocated_workloads
             )
-            cpu_count = float(node.runtime_info["cpu_count"])
-            memory_bytes = int(node.runtime_info["memory_bytes"])
-            remaining_cpu = cpu_count - allocated_cpu
-            remaining_memory = memory_bytes - allocated_memory
-            # Prefer nodes with more remaining capacity relative to their size.
-            cpu_ratio = remaining_cpu / cpu_count
-            memory_ratio = remaining_memory / memory_bytes
-            return min(cpu_ratio, memory_ratio)
 
-        selected_node = max(eligible_nodes, key=remaining_capacity)
+            allocated_memory_bytes = sum(
+                w.memory_limit_mb * 1024 * 1024
+                for w in active_workloads
+                if str(w.node_id) == str(node.node_id)
+                and w.actual_state
+                in {
+                    WorkloadState.SCHEDULED,
+                    WorkloadState.RUNNING,
+                }
+            )
+
+            remaining_cpu = cpu_count - allocated_cpu
+            remaining_memory = memory_bytes - allocated_memory_bytes
+
+            return remaining_cpu * remaining_memory
+
+        # Select the eligible node with the greatest remaining capacity.
+        selected_node = max(
+            eligible_nodes,
+            key=remaining_capacity,
+        )
 
         workload.node_id = UUID(str(selected_node.node_id))
         workload.actual_state = WorkloadState.SCHEDULED
         workload.updated_at = datetime.now(UTC)
         self.workload_service.update_workload(workload)
 
-        execution_url = f"http://{selected_node.address}:8000/containers"
+        execution_url = (
+            f"http://{selected_node.address}:8000/containers"
+        )
 
         payload = {
             "workload_id": str(workload.workload_id),
@@ -149,7 +176,10 @@ class WorkloadScheduler:
 
             result = response.json()
 
-            if result.get("status") != "RUNNING":
+            if (
+                not isinstance(result, dict)
+                or result.get("status") != "RUNNING"
+            ):
                 raise SchedulingError(
                     "Node Agent did not confirm that the container is running"
                 )
@@ -160,6 +190,12 @@ class WorkloadScheduler:
             workload.actual_state = WorkloadState.FAILED
             raise ExecutionError(
                 f"Node Agent execution request failed: {exc}"
+            ) from exc
+
+        except ValueError as exc:
+            workload.actual_state = WorkloadState.FAILED
+            raise ExecutionError(
+                f"Node Agent returned invalid JSON: {exc}"
             ) from exc
 
         except SchedulingError:

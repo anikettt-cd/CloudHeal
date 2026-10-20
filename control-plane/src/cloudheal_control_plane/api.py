@@ -1,8 +1,11 @@
+import asyncio
+from contextlib import asynccontextmanager
 from uuid import UUID
 from typing import Any
-
+from cloudheal_control_plane.workloads.reconciler import WorkloadReconciler
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, status
+from cloudheal_control_plane.database import initialize_database
 
 from cloudheal_control_plane.registry import (
     NodeRecord,
@@ -23,9 +26,44 @@ from cloudheal_control_plane.workloads.scheduler import (
     SchedulingError,
     WorkloadScheduler,
 )
+
+async def reconciliation_loop():
+    while True:
+        try:
+            failures = await asyncio.to_thread(
+                workload_reconciler.reconcile
+            )
+
+            for workload_id in failures:
+                print(
+                    f"[CloudHeal] Detected failed workload: {workload_id}"
+                )
+
+        except Exception as exc:
+            print(f"[CloudHeal] Reconciliation error: {exc}")
+
+        await asyncio.sleep(10)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    initialize_database()
+    task = asyncio.create_task(reconciliation_loop())
+
+    try:
+        yield
+    finally:
+        task.cancel()
+
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
 app = FastAPI(
     title="CloudHeal Control Plane",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 class NodeHeartbeat(BaseModel):
@@ -36,6 +74,7 @@ class NodeHeartbeat(BaseModel):
 workload_registry = WorkloadRegistry()
 workload_service = WorkloadService(workload_registry)
 workload_scheduler = WorkloadScheduler(workload_service)
+workload_reconciler = WorkloadReconciler(workload_service)
 
 
 @app.get("/health")

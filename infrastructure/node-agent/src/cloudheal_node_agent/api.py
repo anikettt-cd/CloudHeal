@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from uuid import UUID
 
 from cloudheal_node_agent.runtime_info import get_runtime_info
 from cloudheal_node_agent.heartbeat import heartbeat_loop
@@ -10,6 +11,7 @@ from fastapi import FastAPI, HTTPException, status
 
 from cloudheal_node_agent.runtime import (
     ContainerExecutionError,
+    get_container_status,
     run_container,
 )
 from cloudheal_node_agent.workload_models import ContainerRunRequest
@@ -73,8 +75,17 @@ def create_container(request: ContainerRunRequest):
           status_code=status_code,
           detail=message,
         ) from exc
-        
+
 @app.get("/runtime")
 def runtime():
-    return get_runtime_info()        
-        
+    return get_runtime_info()
+
+@app.get("/containers/{workload_id}/status")
+def container_status(workload_id: UUID):
+    try:
+        return get_container_status(workload_id)
+    except ContainerExecutionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
