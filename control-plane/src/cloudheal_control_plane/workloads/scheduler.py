@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 from uuid import UUID
-
+from cloudheal_control_plane.database import record_event
 import httpx
 
 from cloudheal_control_plane.registry import NodeRecord, get_nodes
@@ -10,7 +10,6 @@ from cloudheal_control_plane.workloads.service import WorkloadService
 
 class SchedulingError(Exception):
     pass
-
 
 class ExecutionError(Exception):
     pass
@@ -155,6 +154,17 @@ class WorkloadScheduler:
         workload.updated_at = datetime.now(UTC)
         self.workload_service.update_workload(workload)
 
+        record_event(
+            event_type="WORKLOAD_SCHEDULED",
+            workload_id=str(workload.workload_id),
+            node_id=str(selected_node.node_id),
+            details={
+                "image": workload.image,
+                "cpu_limit": workload.cpu_limit,
+                "memory_limit_mb": workload.memory_limit_mb,
+            },
+        )
+
         execution_url = (
             f"http://{selected_node.address}:8000/containers"
         )
@@ -185,23 +195,51 @@ class WorkloadScheduler:
                 )
 
             workload.actual_state = WorkloadState.RUNNING
+            record_event(
+                event_type="EXECUTION_SUCCEEDED",
+                workload_id=str(workload.workload_id),
+                node_id=str(selected_node.node_id),
+                details={
+                    "image": workload.image,
+                    "status": "RUNNING",
+                     },
+            )
 
         except httpx.HTTPError as exc:
             workload.actual_state = WorkloadState.FAILED
+            record_event(
+                event_type="EXECUTION_FAILED",
+                workload_id=str(workload.workload_id),
+                node_id=str(selected_node.node_id),
+                details={"error": str(exc)},
+            )
             raise ExecutionError(
                 f"Node Agent execution request failed: {exc}"
             ) from exc
 
         except ValueError as exc:
             workload.actual_state = WorkloadState.FAILED
+            record_event(
+                event_type="EXECUTION_FAILED",
+                workload_id=str(workload.workload_id),
+                node_id=str(selected_node.node_id),
+                details={"error": str(exc)},
+            )
             raise ExecutionError(
                 f"Node Agent returned invalid JSON: {exc}"
             ) from exc
 
-        except SchedulingError:
+        except SchedulingError as exc:
             workload.actual_state = WorkloadState.FAILED
-            raise
 
+            record_event(
+               event_type="EXECUTION_FAILED",
+               workload_id=str(workload.workload_id),
+               node_id=str(selected_node.node_id),
+               details={"error": str(exc)},
+            )
+
+            raise
         finally:
             workload.updated_at = datetime.now(UTC)
             self.workload_service.update_workload(workload)

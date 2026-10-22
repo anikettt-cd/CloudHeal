@@ -2,7 +2,7 @@ from unittest.mock import Mock, patch
 from uuid import uuid4 , UUID
 import httpx
 import pytest
-
+from cloudheal_control_plane.database import get_connection
 from cloudheal_control_plane.registry import NodeRecord
 from cloudheal_control_plane.workloads.models import (
     WorkloadCreate,
@@ -311,3 +311,36 @@ def test_scheduled_workloads_consume_node_capacity(
 
     mock_post.assert_not_called()
     assert workload.actual_state == WorkloadState.PENDING
+
+@patch("cloudheal_control_plane.workloads.scheduler.httpx.post")
+@patch("cloudheal_control_plane.workloads.scheduler.get_nodes")
+def test_missing_status_records_execution_failure(
+    mock_get_nodes, mock_post, setup_scheduler
+):
+    scheduler, workload, node = setup_scheduler
+    mock_get_nodes.return_value = [node]
+
+    mock_response = Mock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {
+        "workload_id": str(workload.workload_id)
+    }
+    mock_post.return_value = mock_response
+
+    with pytest.raises(SchedulingError, match="did not confirm"):
+        scheduler.schedule(workload.workload_id)
+
+    with get_connection() as connection:
+        event = connection.execute(
+            """
+            SELECT event_type, workload_id
+            FROM events
+            WHERE workload_id = ?
+              AND event_type = 'EXECUTION_FAILED'
+            """,
+            (str(workload.workload_id),),
+        ).fetchone()
+
+    assert event is not None
+    assert event["workload_id"] == str(workload.workload_id)    
+    

@@ -1,6 +1,8 @@
 import os
 import sqlite3
 from pathlib import Path
+import json
+from datetime import UTC, datetime
 
 
 DEFAULT_DB_PATH = Path.home() / ".cloudheal" / "cloudheal.db"
@@ -68,3 +70,31 @@ def initialize_database() -> None:
             )
             """
         )
+
+def record_event(
+    event_type: str,
+    workload_id: str | None = None,
+    node_id: str | None = None,
+    details: dict | None = None,
+) -> None:
+    """Persist a timestamped CloudHeal event."""
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO events (
+                event_type,
+                workload_id,
+                node_id,
+                details,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                event_type,
+                workload_id,
+                node_id,
+                json.dumps(details or {}),
+                datetime.now(UTC).isoformat(),
+            ),
+        )        
