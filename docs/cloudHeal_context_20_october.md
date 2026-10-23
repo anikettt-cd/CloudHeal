@@ -1,8 +1,9 @@
 CloudHeal — Complete Project Context & Revised Implementation Roadmap
 
-Last updated: 20 October 2026
-Project stage: Distributed infrastructure foundation with basic container recovery
-Immediate priority: Inspect the current implementation, establish test results, and plan persistence and recovery safety before implementing cross-node failover.
+Last updated: 22 October 2026
+Current stage: Control Plane, Docker execution, basic reconciliation, and initial SQLite/event-recording implementation exist. Persistence verification is ongoing.
+Immediate priority: Connect and verify a Windows laptop as the second real compute node.
+Latest recorded Control Plane test result: 23 passed in 0.33 seconds on 21 October 2026. This is the latest recorded result, not a new test run today.
 
 ⸻
 
@@ -10,239 +11,306 @@ Immediate priority: Inspect the current implementation, establish test results, 
 
 1.1 What Are We Building?
 
-CloudHeal is a student engineering project that aims to build a small distributed cloud platform using our team’s laptops as compute nodes.
+CloudHeal is a student engineering project to build a small distributed cloud platform using our team’s laptops as compute nodes, with a focus on reliable, measurable, and safe self-healing.
 
-The intended development environment consists of four laptops:
+The intended environment consists of:
 
 * One MacBook Air running macOS.
 * Three teammates’ laptops running Windows.
-* Tailscale for private network connectivity.
-* A centralized Python/FastAPI Control Plane.
-* A Node Agent running on each participating laptop.
-* Docker for container execution.
-* SQLite for persistent Control Plane state.
-* A future AI-assisted self-healing layer.
+* Tailscale for private networking.
+* A Python/FastAPI Control Plane.
+* A Node Agent on each participating laptop.
+* Docker Desktop for workload execution.
+* SQLite for persistent Control Plane state and event history.
+* A future AI-assisted diagnosis and recovery-planning layer.
 
-CloudHeal will progressively support:
+CloudHeal should support:
 
-1. Registering and monitoring compute nodes.
-2. Collecting node and runtime resource information.
-3. Accepting workload deployment requests.
-4. Scheduling workloads onto eligible nodes.
-5. Executing Docker containers through Node Agents.
-6. Detecting container, application, and node failures.
-7. Recovering workloads when recovery is safe.
-8. Preventing stale commands and reducing duplicate-execution risk.
-9. Recording and measuring recovery behavior.
-10. Providing a stable application endpoint across successful recovery.
-11. Using AI to assist with ambiguous failure diagnosis and constrained recovery planning.
+1. Node registration and monitoring.
+2. Heartbeat processing and node-health detection.
+3. System and Docker runtime information collection.
+4. Resource-aware workload scheduling.
+5. Docker execution through Node Agents.
+6. Persistent workload state and timestamped event history.
+7. Container and node failure detection.
+8. Safe, verified cross-node workload recovery.
+9. Leases, placement generations, and agent-enforced fencing.
+10. Bounded retries and recovery-storm protection.
+11. Recovery concurrency and capacity controls.
+12. A stable application URL across successful recovery.
+13. Repeatable experiments and measured results.
+14. AI-assisted diagnosis and constrained recovery planning.
 
-This is a development and demonstration platform. The laptops do not need to remain online 24/7.
+The laptops do not need to remain online continuously. CloudHeal is a development and demonstration platform, not a production cloud service.
 
-1.2 Final Demonstration
+1.2 Intended Final Demonstration
 
-The intended demonstration is:
+The final demonstration should show:
 
-1. Deploy an application through CloudHeal.
-2. Show which laptop is running it.
-3. Introduce a controlled failure.
-4. Detect and classify the failure.
-5. Decide whether recovery is appropriate.
-6. Select an eligible destination node.
-7. Execute a replacement workload.
-8. Verify the replacement’s actual health.
-9. Keep the application accessible through a stable URL.
-10. Record detection time, recovery time, and other relevant events.
-11. Compare recovery policies using repeatable experiments.
-12. Demonstrate AI-assisted diagnosis and constrained planning if time permits.
+1. Deploying an application through CloudHeal.
+2. Identifying which laptop is executing it.
+3. Observing workload and actual container state.
+4. Introducing a controlled failure.
+5. Detecting and classifying the failure.
+6. Evaluating whether recovery is safe.
+7. Selecting an eligible destination node.
+8. Executing a replacement workload.
+9. Verifying its actual runtime state and application health.
+10. Maintaining access through a stable application URL.
+11. Recording execution and recovery events.
+12. Comparing recovery policies through repeated experiments.
+13. Demonstrating AI-assisted diagnosis and constrained planning, if time permits.
 
-The project’s contribution must be demonstrated through actual infrastructure behavior, reliable recovery, and measurable results—not just a dashboard or chatbot.
-
-⸻
-
-2. Core Engineering Problems
-
-CloudHeal should address the following practical problems.
-
-2.1 Container and Application Failures
-
-A container may stop, disappear, repeatedly crash, or remain running while its application is unhealthy.
-
-CloudHeal should distinguish these situations and select an appropriate response.
-
-Basic stopped/missing-container recovery has previously been verified. Application-level health monitoring and crash-loop protection remain future work.
-
-2.2 Node Failure
-
-A laptop may shut down, its agent may crash, or connectivity may be lost.
-
-CloudHeal should detect sustained unavailability, identify affected workloads, and recover them on eligible nodes when it is safe to do so.
-
-2.3 Temporary Network Problems
-
-A temporary connection failure does not prove that a laptop or its containers have stopped.
-
-The failure detector must distinguish suspicion from confirmed policy-level unavailability.
-
-2.4 Duplicate Execution
-
-An unreachable laptop may still be running its container.
-
-If the Control Plane starts a replacement elsewhere, two copies may run concurrently.
-
-Leases, generation numbers, and agent-enforced fencing must be designed together to reduce this risk.
-
-The defensible target is:
-
-Stale commands must not take effect, and duplicate-execution overlap must be measured and bounded in the tested scenarios.
-
-Do not claim that zero duplicate execution is guaranteed under every failure condition.
-
-2.5 Recovery Storms
-
-When a node fails, moving all its workloads immediately may overload the remaining nodes.
-
-CloudHeal should use capacity-aware placement, bounded concurrency, retry controls, and recovery priorities where appropriate.
-
-2.6 Crash Loops
-
-Repeatedly restarting a failing workload wastes resources.
-
-CloudHeal needs retry limits, exponential backoff, failure history, and a clear escalation or terminal state.
-
-2.7 Difficult Diagnosis
-
-Some failures cannot be classified reliably using simple rules alone.
-
-A future AI layer may inspect structured evidence and recommend actions, but a deterministic safety layer must remain responsible for authorizing recovery operations.
+The project’s contribution must be demonstrated through actual infrastructure behavior, recovery safety, and measured results—not merely a dashboard or chatbot.
 
 ⸻
 
-3. Architecture
+2. Agreed Architecture
 
-3.1 Existing Components
+2.1 The Central Architecture Decision
 
-Control Plane
+CloudHeal will have two major parts:
 
-A Python/FastAPI service responsible for:
+A. Cloud infrastructure: The machines, Docker runtimes, containers, networking, and applications being managed.
 
-* Node registration and health tracking.
-* Workload management.
-* Scheduling.
-* Execution coordination.
-* Reconciliation.
-* Recovery decisions.
+B. Self-Healing Control System: The management intelligence that observes the infrastructure, detects failures, evaluates recovery options, and coordinates authorized actions.
 
-Node Agent
+The Self-Healing Control System will be logically separate from individual workloads. It will extend the existing Control Plane rather than replace it or require a complete rebuild.
 
-A service running on each participating laptop. It is responsible for:
+It will contain two cooperating layers.
 
-* Persistent node identity.
-* Registration and heartbeats.
-* System and runtime information.
-* Permitted Docker operations.
-* Container status reporting.
-* Future lease enforcement and stale-command rejection.
+Layer 1 — Deterministic Self-Healing Engine
 
-Docker Runtime
+Responsible for safety-critical infrastructure behavior:
 
-Runs workload containers locally on each participating laptop.
+* Failure detection.
+* Node-health state transitions.
+* Recovery policies.
+* Workload ownership and lease management.
+* Placement generations and fencing.
+* Recovery authorization.
+* Destination selection and capacity checks.
+* Recovery execution.
+* Bounded retries and concurrency limits.
+* Runtime and application-health verification.
+* Persistent event recording.
 
-Scheduler
+These decisions must not depend on an LLM making a correct recommendation.
 
-Selects an eligible node using health, runtime availability, and reported resource information.
+Layer 2 — AI-Assisted Intelligence
 
-The scheduler has progressed beyond its original first-healthy-node policy. Its current implementation and test results must be rechecked before making further changes.
+Responsible for assisting with decisions:
 
-Reconciler
+* Analyzing failure evidence.
+* Suggesting likely causes.
+* Summarizing relevant logs and event history.
+* Recommending permitted recovery strategies.
+* Proposing constrained recovery plans.
+* Explaining why an action may be appropriate.
+* Comparing observed outcomes with previous incidents.
 
-Periodically compares desired workload state with observed execution state and initiates appropriate actions.
+AI may propose an action, but it must not directly authorize arbitrary infrastructure operations.
 
-Basic stopped/missing-container recovery has previously been verified.
+Mandatory safety rule
 
-Persistent State
+AI proposal → deterministic safety validation → authorized execution → runtime verification.
 
-SQLite is the planned initial persistence layer for node records, workload records, placement generations, and execution/recovery events.
+If the safety gate rejects a recommendation, the system must reject, defer, or escalate the action according to policy.
 
-Future Application Gateway
+The infrastructure must continue operating when the AI model or external model API is unavailable. Deterministic recovery must remain functional without an LLM.
 
-A stable endpoint will route application requests to the workload’s current location.
+2.2 Target Architecture
 
-Routing must remain separate from scheduling and recovery.
+                    USER / DEVELOPER
+                           |
+                           v
+                CLOUDHEAL APPLICATION GATEWAY
+                           |
+                           v
+             +--------------------------------+
+             |    SELF-HEALING CONTROL SYSTEM |
+             |                                |
+             | Deterministic Engine           |
+             | - Failure detection            |
+             | - Recovery policies            |
+             | - Lease and fencing checks     |
+             | - Placement generations        |
+             | - Recovery and verification    |
+             |                                |
+             | AI-Assisted Intelligence       |
+             | - Diagnosis agent              |
+             | - Recovery planning agent      |
+             |                                |
+             | Deterministic Safety Gate      |
+             +---------------+----------------+
+                             |
+                             v
+                    CONTROL PLANE API
+                             |
+                 +-----------+-----------+
+                 |                       |
+                 v                       v
+          NODE AGENT: MAC         NODE AGENT: WINDOWS
+                 |                       |
+                 v                       v
+            Docker Runtime          Docker Runtime
+                 |                       |
+                 v                       v
+             Workloads               Workloads
 
-Future AI Layer
+This is the target architecture, not a claim that every component has been implemented.
 
-AI-assisted diagnosis and constrained recovery planning will be added only after the deterministic recovery path is sufficiently reliable.
+The current Control Plane is the foundation. We should evolve the existing implementation incrementally.
+
+2.3 Where Should the Self-Healing Code Live?
+
+The recommendation is a separate Python package within the existing Control Plane package.
+
+A possible future structure is:
+
+control-plane/
+└── src/
+    └── cloudheal_control_plane/
+        ├── main.py
+        ├── api.py
+        ├── database.py
+        ├── registry.py
+        ├── workloads/
+        │   ├── models.py
+        │   ├── registry.py
+        │   ├── service.py
+        │   ├── scheduler.py
+        │   └── reconciler.py
+        └── self_healing/
+            ├── detector.py
+            ├── recovery_engine.py
+            ├── recovery_policy.py
+            ├── lease_manager.py
+            ├── diagnosis_agent.py
+            ├── planning_agent.py
+            └── safety_gate.py
+
+This is a proposed organization only. Some responsibilities already exist under different names.
+
+Do not create, move, or rename these files immediately. Inspect the actual repository and existing implementation before deciding where each responsibility belongs.
+
+Component	Responsibility
+Detector	Detect suspicious or unavailable nodes using defined policies
+Recovery engine	Coordinate authorized recovery actions
+Recovery policy	Enforce retries, limits, priorities, and permitted actions
+Lease manager	Manage time-limited execution authority
+Scheduler	Select a suitable destination using health and capacity
+Reconciler	Compare desired state with observed state and correct discrepancies
+Diagnosis agent	Analyze failure evidence and suggest likely causes
+Planning agent	Propose constrained recovery strategies
+Safety gate	Validate proposed actions against deterministic policies
+Database/event store	Persist state transitions, decisions, and outcomes
+
+2.4 Node Agents Versus AI Agents
+
+These are different components.
+
+Node Agent:
+
+* Runs on each participating laptop.
+* Registers with the Control Plane.
+* Sends heartbeats.
+* Reports system and Docker runtime information.
+* Executes authorized local Docker operations.
+* Reports actual container status.
+* Will eventually enforce lease expiry and generation fencing.
+
+AI Agent:
+
+* Analyzes evidence.
+* Helps diagnose failures.
+* Recommends recovery strategies.
+* Proposes constrained plans.
+* Does not receive unrestricted shell access or direct unrestricted access to the Docker socket.
+
+The AI agent does not need to run on every laptop.
+
+2.5 Controller Availability Limitation
+
+The Control Plane currently runs on the MacBook.
+
+If the Mac becomes unavailable, the controller itself may also become unavailable. The current design does not establish controller high availability.
+
+We should acknowledge this limitation in the project report rather than claim that CloudHeal can always recover from controller failure.
+
+A separate management machine or replicated controller could be a future extension. It is not our immediate priority.
 
 ⸻
 
-4. Repository and Development Environment
+3. Repository and Development Environment
 
-Repository:
+3.1 Repository
+
+Local repository:
 
 /Users/aniketsaini/Desktop/CloudHeal
 
 Activate the environment:
 
-cd /Users/aniketsaini/Desktop/CloudHeal
+cd ~/Desktop/CloudHeal
 source .venv/bin/activate
+
+Inspect the working tree:
+
 git status
+git diff
+git diff --check
 
 The project uses uv.
 
-4.1 Known Repository Structure
+Development rules
 
-CloudHeal/
-├── CloudHeal_CONTEXT.md
-├── README.md
-├── pyproject.toml
-├── uv.lock
-├── docs/
-│   ├── SPEC-001-cloudheal.md
-│   └── current_progress.md
-├── control-plane/
-│   └── src/
-│       └── cloudheal_control_plane/
-│           ├── api.py
-│           ├── main.py
-│           ├── registry.py
-│           └── workloads/
-│               ├── models.py
-│               ├── registry.py
-│               ├── service.py
-│               ├── scheduler.py
-│               └── reconciler.py
-└── infrastructure/
-    └── node-agent/
-        └── src/
-            └── cloudheal_node_agent/
-                ├── api.py
-                ├── identity.py
-                ├── main.py
-                ├── models.py
-                ├── network.py
-                ├── registration.py
-                ├── heartbeat.py
-                ├── system.py
-                └── runtime.py
+* Inspect existing code before editing.
+* Preserve all uncommitted changes.
+* Do not reset or discard work to obtain a clean working tree.
+* Make incremental changes.
+* Reuse existing implementations.
+* Run relevant tests after meaningful changes.
+* Verify actual Docker state where appropriate.
+* Distinguish implementation, automated testing, and real-environment verification.
+* Update the repository context after verified milestones.
+* Do not report a phase as complete merely because its tests pass.
 
-This is the previously documented structure, not a guarantee that every file remains unchanged.
+3.2 Known Documentation
 
-Inspect the actual repository before creating files, changing interfaces, or assuming that a documented implementation still exists.
+Previously identified project documentation includes:
+
+* CloudHeal_CONTEXT.md
+* docs/SPEC-001-cloudheal.md
+* docs/current_progress.md
+* docs/Implementation_plan_20_oct.md
+* docs/cloudHeal_context_21_october.md
+
+Inspect the current repository before assuming every file is present or unchanged.
+
+Maintain two forms of context:
+
+Repository context: Shared architecture, implementation status, protocols, safety requirements, and test evidence.
+
+Personal development notes: Machine-specific IP addresses, local startup commands, and individual debugging notes.
+
+Do not make shared repository documentation depend on a developer’s current local IP address.
 
 ⸻
 
-5. Existing Infrastructure and Known State
+4. Current Infrastructure
 
-5.1 Control Plane
+4.1 Control Plane
 
-Package: cloudheal-control-plane
+Package:
 
-Previously configured address:
+cloudheal-control-plane
+
+Local address:
 
 http://127.0.0.1:9000
 
-Previously documented startup command:
+Startup command:
 
 uv run --package cloudheal-control-plane cloudheal-control-plane
 
@@ -251,23 +319,25 @@ Known endpoints:
 Endpoint	Purpose
 GET /health	Check Control Plane availability
 POST /nodes/register	Register a node
-GET /nodes	List nodes
+GET /nodes	List registered nodes
 GET /nodes/{node_id}	Retrieve node information
 POST /nodes/{node_id}/heartbeat	Receive heartbeat information
 POST /workloads	Create a workload
 GET /workloads	List workloads
 GET /workloads/{workload_id}	Retrieve a workload
-POST /workloads/{workload_id}/schedule	Request scheduling
+POST /workloads/{workload_id}/schedule	Request workload scheduling
 
-Persistence limitation: The documented node and workload registries currently use in-memory data structures. Their records do not survive a Control Plane restart.
+Inspect the current API before assuming route behavior is unchanged. The workload event endpoint was previously found to return 404; do not assume it has since been implemented.
 
-Confirm this against the current code before beginning the persistence milestone.
+4.2 Node Agent
 
-5.2 Node Agent
+Package:
 
-Package: cloudheal-node-agent
+cloudheal-node-agent
 
-Previously configured port: 8000
+Previously configured port:
+
+8000
 
 Startup command:
 
@@ -277,41 +347,65 @@ Previously documented persistent identity file:
 
 ~/.cloudheal/node_id
 
-Previously configured heartbeat interval: 10 seconds.
+Previously configured heartbeat interval: approximately 10 seconds.
 
-The agent already supports registration, heartbeats, system/runtime information reporting, Docker execution, and container status queries.
+The Node Agent already supports registration, heartbeats, system/runtime reporting, Docker operations, and container status queries.
 
-Lease renewal, reliable self-fencing, and generation enforcement are not yet established as complete.
+Lease enforcement and generation-based fencing are not yet established as complete.
 
-5.3 Known Mac Development Node
+4.3 Mac Development Node
 
-Previously recorded information:
+Previously recorded values:
 
-* Node ID: 83a1f6f3-9bbc-4e1f-8566-5080aef7d7ed
-* Hostname: Anikets-MacBook-Air.local
-* Last recorded local address: 192.168.1.124
-* Operating system: macOS
-* Architecture: ARM64
-* Physical CPU cores: 8
-* Logical CPU cores: 8
-* Physical memory: 8 GiB
-* Docker version: 29.8.2
-* Docker runtime: Available
+Property	Recorded value
+Node ID	83a1f6f3-9bbc-4e1f-8566-5080aef7d7ed
+Hostname	Anikets-MacBook-Air.local
+Tailscale IP	100.90.104.13
+Operating system	macOS
+Architecture	ARM64 / aarch64
+Physical memory	8 GiB
+Docker Desktop version	29.8.2
 
-These values are historical. Query the current node and Docker runtime before conducting capacity-sensitive experiments.
+These values are historical observations and must be checked before capacity-sensitive experiments.
+
+The Control Plane and Mac Node Agent were recently observed to be running. The Mac node was registered and reporting a healthy state. Docker runtime information was available in the latest observed node response.
+
+Previously reported Docker runtime memory was approximately 4.1 billion bytes. This is runtime/VM memory information, not necessarily the Mac’s physical RAM.
+
+4.4 Windows Node
+
+The Windows laptop remains the immediate integration target.
+
+A previously reported Windows Tailscale IP was:
+
+100.127.235.82
+
+This is historical and must be rechecked on Windows.
+
+Before making application changes, verify:
+
+* Tailscale connectivity.
+* Current Windows and Mac Tailscale IP addresses.
+* Docker Desktop availability.
+* Successful docker info.
+* Windows-to-Mac connectivity on port 9000.
+* Control Plane-to-Agent communication.
+* Registration and heartbeat delivery.
+
+Reuse the existing Node Agent unless testing identifies a specific Windows compatibility issue.
 
 ⸻
 
-6. Workload Management and Scheduling
+5. Workload Management and Execution
 
-6.1 Workload States
+5.1 Desired and Actual States
 
-Previously documented desired states:
+Existing desired states:
 
 * RUNNING
 * STOPPED
 
-Previously documented actual states:
+Existing actual states:
 
 * PENDING
 * SCHEDULED
@@ -319,325 +413,462 @@ Previously documented actual states:
 * FAILED
 * STOPPED
 
-Desired state indicates what should happen.
+Desired state represents what the system should do. Actual state represents what the Control Plane believes has happened.
 
-Actual state describes what the Control Plane currently believes has happened.
-
-For example:
+Example:
 
 desired_state = RUNNING
 actual_state  = FAILED
 
 The workload should be running, but execution has failed.
 
-Recovery must check desired state before taking action.
+Recovery must check desired state. A workload whose desired state is STOPPED must not be automatically restarted.
 
-6.2 Resource-Aware Scheduling
-
-The documented scheduler considers:
-
-* Node health.
-* Runtime availability.
-* CPU information.
-* Memory information.
-* Workload CPU requirements.
-* Workload memory requirements.
-* Existing scheduled/running workload allocations.
-* Remaining node capacity.
-
-The scheduler filters unsuitable nodes and chooses a destination using a remaining-capacity score.
-
-The exact implementation and latest tests must be rechecked.
-
-Docker Memory Correction
-
-A laptop’s physical RAM must not be treated as equivalent to memory available to containers.
-
-On Docker Desktop, containers run inside a Linux VM with its own resource configuration.
-
-CloudHeal must distinguish:
-
-1. Host physical memory.
-2. Runtime/VM memory capacity.
-3. Current runtime memory availability, where reliably measurable.
-4. CloudHeal’s allocated workload capacity.
-
-Inspect Docker’s actual runtime information and configured limits on macOS and Windows.
-
-Scheduling estimates must not exceed the capacity CloudHeal intends to allocate.
-
-6.3 Scheduler-to-Agent Execution
-
-The Control Plane requests execution from the selected Node Agent.
-
-The Node Agent invokes the local Docker runtime and returns an execution result.
+5.2 Execution Lifecycle
 
 The intended lifecycle is:
 
 PENDING → SCHEDULED → RUNNING
                      ↘ FAILED
 
-The Control Plane must not report successful execution merely because it selected a node.
+A successful scheduling decision is not proof of successful execution.
 
-Timeouts and uncertain HTTP responses require special care: a request may have started a container even if the Control Plane never received the response.
+The Control Plane must validate the result returned by the Node Agent.
 
-Future generation-aware execution and reconciliation must account for this possibility.
+An HTTP timeout is also not proof that execution failed. A request may have started a container even if the response never reached the Control Plane.
+
+Future generation-aware execution and reconciliation must account for uncertain outcomes.
+
+5.3 Remote Execution
+
+The intended execution flow is:
+
+Control Plane
+    → Selected Node Agent
+        → Local Docker Runtime
+            → Container
+        ← Actual execution result
+    ← Control Plane updates state and events
+
+The Control Plane must communicate with the remote Node Agent rather than assume it can execute Docker commands directly on another laptop.
+
+The database state must be checked against actual container state.
 
 ⸻
 
-7. Existing Reconciliation and Container Recovery
+6. Current Implementation Status
 
-7.1 Previously Implemented Behavior
+This section distinguishes previously implemented behavior from incomplete or unverified requirements.
 
-The reconciler is documented as running approximately every 10 seconds.
+6.1 Implemented Foundation
 
-Previously documented capabilities include:
+Previously implemented and tested:
 
-* Scheduling pending workloads whose desired state is RUNNING.
-* Retrying certain failed workloads whose desired state remains RUNNING.
-* Querying Node Agent container status.
-* Detecting stopped or missing containers.
-* Updating workload state.
-* Initiating recovery.
-* Scheduling and executing replacement containers.
+* FastAPI Control Plane.
+* Node registration and lookup.
+* Heartbeat processing.
+* System information reporting.
+* Docker runtime information reporting.
+* Workload creation and retrieval.
+* Scheduler-to-Agent communication.
+* Docker execution through the Node Agent.
+* Container status queries.
+* Periodic reconciliation.
+* Basic stopped/missing-container recovery.
 
-Inspect the current implementation before modifying this logic.
+6.2 SQLite Persistence and Event History
 
-7.2 Previously Verified Results
+Recent work introduced:
 
-During the 19 October 2026 development session:
+* A database module.
+* SQLite schema for nodes, workloads, and events.
+* Workload persistence through the existing workload registry.
+* Persistence of workload state changes associated with scheduling and execution.
+* WAL and busy-timeout configuration in the existing implementation.
+* Timestamped execution-event recording.
+* Persistence and event-related tests.
+
+The implementation remains partially verified.
+
+Required follow-up:
+
+1. Verify complete node lifecycle persistence.
+2. Verify workload state through creation, scheduling, execution, and recovery.
+3. Verify restoration after a Control Plane restart.
+4. Record all important scheduling, health, and recovery transitions.
+5. Ensure related state changes and events are transactionally consistent.
+6. Persist placement generations when implemented.
+7. Discover and safely adopt identifiable containers at startup.
+8. Verify that restart reconciliation does not blindly create replacements.
+
+Previously observed event types include:
+
+* EXECUTION_SUCCEEDED
+* EXECUTION_FAILED
+
+The exact current event coverage must be checked in the implementation.
+
+The event history ultimately needs to cover workload creation, scheduling decisions, node-state transitions, failure detection, recovery attempts, retries, execution results, and recovery verification.
+
+A database schema existing does not prove that the full lifecycle is persisted correctly.
+
+6.3 Scheduler and Execution Results
+
+The scheduler has progressed beyond a simple first-healthy-node approach.
+
+It considers node suitability, runtime information, and reported resource capacity. It coordinates execution through Node Agents.
+
+Recent tests covered scheduling behavior, execution outcomes, and failure cases, including missing execution status.
+
+However, resource assumptions must be verified against live Docker runtime information on both macOS and Windows.
+
+6.4 Reconciliation and Basic Recovery
+
+The reconciler periodically compares desired workload state with observed execution state. Its previously configured interval is approximately 10 seconds.
+
+Previously demonstrated behavior includes:
 
 1. A workload was running through CloudHeal.
 2. Its container was deliberately stopped or removed.
-3. The reconciliation/recovery path detected the stopped or missing container.
+3. Reconciliation detected the stopped or missing container.
 4. CloudHeal initiated recovery.
-5. Docker independently confirmed that the replacement was running.
-6. The workload returned to RUNNING.
+5. A replacement container was created.
+6. Docker independently confirmed that the replacement was running.
+7. The workload returned to RUNNING.
 
-One recorded recovery test used workload ID:
+A previously recorded recovery test used workload ID:
 
 1b5b2f07-169a-47c8-a6c0-b1a0026f821e
 
-A subsequent Docker start time was recorded as:
+The recorded replacement start time was:
 
 2026-10-19T19:11:42.747967761Z
 
-The replacement container reported RestartCount=0 in the recorded inspection.
+The replacement reported RestartCount=0 in the recorded inspection.
 
-Separate recorded test runs reported:
+This demonstrates basic recovery from a stopped or missing container. It does not establish safe recovery after an entire laptop becomes unreachable.
 
-* 14 passing tests.
-* 24 passing tests.
-* Four reconciler tests passing after a test-fixture adjustment.
+6.5 Latest Recorded Test Result
 
-These were separate runs. They must not be treated as proof that every test passes in the current working tree.
+On 21 October 2026, this command passed:
 
-7.3 Outstanding Reconciliation Problem
+uv run --package cloudheal-control-plane pytest control-plane/tests -q
 
-A critical issue was identified: when the Control Plane cannot query a running workload’s Node Agent, communication errors such as timeouts may be ignored.
+Recorded output:
 
-This prevents every temporary network interruption from triggering recovery, but an unreachable laptop can leave its workloads recorded as RUNNING indefinitely.
+23 passed in 0.33s
 
-The next implementation must address sustained node unavailability without treating every failed HTTP request as proof that a container has stopped.
+This is the latest recorded full Control Plane test result, not a fresh run on 22 October.
+
+The Node Agent previously had a recorded result of 8 passing tests. An older combined run reported 21 Control Plane tests and 8 Node Agent tests. Those are historical results and should not be described as current test results.
+
+6.6 Previously Verified Workload
+
+A workload named event-test was successfully executed through the Mac Node Agent.
+
+Property	Recorded value
+Workload ID	ff02cc16-e20b-43a6-a41c-62fc996dd3b9
+Image	nginx:latest
+Desired state	RUNNING
+Actual state	RUNNING
+Assigned node	83a1f6f3-9bbc-4e1f-8566-5080aef7d7ed
+Recorded update time	2026-10-21T15:43:14.019430Z
+
+This verifies successful Mac-hosted execution at the recorded time. It does not establish Windows execution or cross-node recovery.
+
+6.7 Known Unfinished Areas
+
+The following are not yet established as complete:
+
+* Complete node and workload persistence.
+* Restart restoration and safe container adoption.
+* Complete timestamped event history.
+* Atomic placement and event updates.
+* Persistent placement generations.
+* HEALTHY → SUSPECT → UNAVAILABLE failure detection.
+* Lease grants, renewals, and expiry enforcement.
+* Agent-enforced fencing.
+* Safe cross-node failover.
+* Windows Node Agent integration.
+* Real network-partition testing.
+* Duplicate-execution overlap measurement.
+* Application-level health checks.
+* Bounded retry and crash-loop protection.
+* Recovery concurrency controls.
+* Stable application gateway.
+* Repeatable experiment runner.
+* Comparative evaluation results.
+* AI-assisted diagnosis and recovery planning.
 
 ⸻
 
-8. Revised Development Order
+7. Immediate Priority: Connect Windows
 
-The previous roadmap placed several safety mechanisms too late. The revised plan treats persistence, node detection, leases, generations, and failover as dependent engineering milestones.
+Do not jump directly into a large failover rewrite. First establish actual distributed execution on two real laptops.
+
+The Windows integration is a separate milestone, but it starts now because it is an important networking and platform risk.
+
+Step 1 — Check the Mac
+
+From the Mac:
+
+cd ~/Desktop/CloudHeal
+source .venv/bin/activate
+git status
+
+Preserve all uncommitted work.
+
+If the Control Plane is not running, start it:
+
+uv run --package cloudheal-control-plane cloudheal-control-plane
+
+In another terminal, start the Mac Node Agent only if necessary:
+
+uv run --package cloudheal-node-agent cloudheal-node-agent
+
+Verify:
+
+curl -s http://127.0.0.1:9000/health
+curl -s http://127.0.0.1:9000/nodes
+
+Do not launch duplicate service processes if they are already running.
+
+Step 2 — Check Windows
+
+Open PowerShell on the Windows laptop and run:
+
+tailscale status
+tailscale ip -4
+docker info
+
+These checks establish the current network address and whether Docker Desktop is available.
+
+Step 3 — Test Windows-to-Mac Connectivity
+
+Using the latest observed Mac Tailscale IP, run:
+
+Test-NetConnection 100.90.104.13 -Port 9000
+
+Expected result:
+
+TcpTestSucceeded : True
+
+Use the verified current Mac IP if it differs.
+
+If connectivity fails, investigate:
+
+* Whether the Control Plane is listening on an interface reachable through Tailscale.
+* macOS firewall behavior.
+* Tailscale connectivity and ACLs.
+* Whether the IP address is current.
+* Whether the service is actually listening on port 9000.
+
+Do not change application code before identifying the cause of a network failure.
+
+Step 4 — Configure and Start the Windows Node Agent
+
+Inspect the existing agent configuration and startup behavior first.
+
+Configure the Windows agent to reach the Control Plane at:
+
+CONTROL_PLANE_URL=http://100.90.104.13:9000
+
+Use the verified current Mac Tailscale address.
+
+Reuse the existing registration, heartbeat, resource reporting, Docker execution, and status-reporting code.
+
+Make platform-specific changes only when testing demonstrates that they are necessary.
+
+Step 5 — Verify Registration and Heartbeats
+
+On the Mac:
+
+curl -s http://127.0.0.1:9000/nodes
+
+Confirm:
+
+* The Mac node is present.
+* The Windows node is present.
+* The Windows node has a stable identity.
+* Heartbeat timestamps update.
+* The Windows operating system is reported correctly.
+* Docker runtime information is available and accurate.
+
+If registration fails, inspect the agent logs and network connectivity before modifying the architecture.
+
+Step 6 — Verify Real Windows Execution
+
+Once Windows is registered and reporting healthy runtime information:
+
+1. Create a test workload.
+2. Confirm that the scheduler selects Windows.
+3. Confirm that the Control Plane contacts the Windows Node Agent.
+4. Confirm that the agent starts the container locally.
+5. Check the container using Windows Docker.
+6. Confirm that the agent reports the actual execution result.
+7. Confirm that the Control Plane records the correct workload state and node assignment.
+8. Verify remote container-status queries.
+
+On Windows:
+
+docker ps
+docker ps -a
+
+A database state of RUNNING is not sufficient evidence on its own.
+
+Step 7 — Attempt Controlled Cross-Node Recovery
+
+Only after Windows execution works:
+
+1. Start a test workload on one laptop.
+2. Verify its actual container state.
+3. Introduce a controlled failure.
+4. Observe the detection and reconciliation behavior.
+5. Determine whether the original container may still be executing.
+6. Verify destination selection.
+7. Verify replacement execution on the other laptop.
+8. Record the outcome and any uncertainty.
+
+Until lease enforcement and generation fencing have been implemented and tested, treat this as a controlled recovery experiment—not proof of safe failover under arbitrary network partitions.
+
+⸻
+
+8. Revised Implementation Roadmap
 
 Phase 1 — Persistence and Event History
 
-Implement SQLite persistence for:
+Status: Partially implemented; verification ongoing.
 
-* Node records and last heartbeat information.
-* Workload records and desired/actual states.
-* Placement generations.
-* Execution and recovery events.
+Existing work includes SQLite schema and persistence logic, execution-event recording, and related tests.
 
-Record timestamped events for:
+Remaining work:
 
-* Workload creation.
-* Scheduling decisions.
-* Node state transitions.
-* Heartbeat timeouts.
-* Failure detection.
-* Recovery attempts.
-* Execution results.
-* Recovery verification.
-* Recovery failures and retry decisions.
+* Verify node registration and heartbeat persistence.
+* Verify workload state through creation, scheduling, execution, and recovery.
+* Record all significant scheduling and recovery transitions.
+* Persist placement generations when introduced.
+* Verify WAL mode and controlled state-changing writes.
+* Use transactions for related state changes and events.
+* Make generation allocation atomic with placement.
+* Restore persisted records after restart.
+* Discover and safely adopt identifiable running containers.
 
-Persistence requirements
+Completion test: Restart the Control Plane and verify that node/workload state and event history survive, existing containers are identified correctly, and the system does not blindly create replacements.
 
-* Enable SQLite WAL mode.
-* Use a controlled single-writer strategy for state changes.
-* Use database transactions for related state updates.
-* Make generation allocation atomic with the placement decision.
-* Ensure concurrent recovery attempts cannot allocate the same generation.
-* Preserve event history across Control Plane restarts.
-
-At startup, reconcile persisted records with containers already running on registered nodes.
-
-Adopt identifiable containers where appropriate instead of blindly creating replacements.
-
-Container adoption must validate workload identity and placement generation where available. If a container cannot be safely identified, record the uncertainty rather than assuming it is safe to duplicate.
-
-Completion criteria: Restart the Control Plane and verify that node/workload records and events persist, and existing containers are discovered or adopted correctly.
+Do not mark Phase 1 complete until this behavior has been demonstrated.
 
 Phase 2 — Node Health and Failure Detection
 
-Implement the node state machine:
+Status: Not implemented to the full specification.
+
+Implement the state machine:
 
 HEALTHY → SUSPECT → UNAVAILABLE
 
-Use heartbeat timestamps and a configurable timeout policy.
-
-The state meanings are:
+Definitions:
 
 * HEALTHY: Recent communication and no detected failure.
-* SUSPECT: Heartbeat or communication information has become stale.
-* UNAVAILABLE: The failure-detection policy has determined that the node is no longer eligible for new placement and that recovery evaluation may begin.
+* SUSPECT: Communication or heartbeat information has become stale.
+* UNAVAILABLE: The configured failure-detection policy has made the node ineligible for new placements and eligible for recovery evaluation.
 
-A node becoming UNAVAILABLE does not prove that its containers have stopped.
+A node becoming unavailable does not prove that its containers have stopped.
 
-Test:
+Requirements:
 
-* Recent heartbeat.
-* Stale heartbeat.
-* Delayed heartbeat.
-* Agent termination.
-* Temporary communication failure.
-* Sustained node unavailability.
-* Recovery after communication resumes.
+* Heartbeat timestamps and configurable timeouts.
+* Timestamped node-state transition events.
+* Tests for delayed heartbeats and agent termination.
+* Tests for temporary network interruption and recovery.
+* Distinction between a stopped container and an unreachable node.
+* No unsafe failover triggered solely by an HTTP timeout.
 
-Every node state transition should produce a timestamped event.
+Completion test: Demonstrate the expected state transitions under controlled failures and verify their corresponding events.
 
-Start with a straightforward, measurable timeout policy. Evaluate adaptive failure detection later only if the baseline measurements justify it.
+Phase 3 — Leases, Generations, and Fencing
 
-Phase 3 — Leases, Generations, and Failover
+Status: Not implemented as an integrated safety protocol.
 
-Treat leases, generation enforcement, and cross-node failover as one integrated safety milestone.
+Implement leases, generations, and failover as one coordinated milestone.
 
-Implement and test them together before claiming safe failover.
+Leases
 
-A. Lease Protocol
+The Control Plane grants and renews time-limited execution authority.
 
-The Control Plane grants and renews time-limited authority to Node Agents.
+Requirements:
 
-Let:
+* Explicit lease duration and safety margin.
+* A defined, validated renewal protocol.
+* Agent-enforced lease expiry.
+* Safe handling of delayed renewal responses.
+* Monotonic-clock-based expiry checks.
+* Revalidation after long pauses or laptop sleep.
+* Self-fencing after execution authority expires.
+* Safe handling of uncertainty about whether a previous execution remains active.
 
-* D = lease duration.
-* t_send = local monotonic time when the agent sends a heartbeat requesting renewal.
-* M = explicit safety margin accounting for clock-rate uncertainty and implementation delays.
+Lease expiry alone does not prove that an existing container has stopped.
 
-Protocol requirements:
+Placement generations
 
-1. A successful heartbeat reply renews the agent’s lease for duration D.
-2. The agent starts its local expiry timer at t_send, not when the reply arrives.
-3. The agent uses a monotonic clock for elapsed-time calculations.
-4. A delayed reply must not extend the lease beyond the safe deadline derived from t_send.
-5. If the lease expires, the agent self-fences: it stops or otherwise disables the workloads it is no longer authorized to run and refuses workload commands until authority is renewed.
-6. The Control Plane must not authorize replacement execution before the previous authority is considered expired under the agreed timing model.
-7. The Control Plane must account for clock-rate tolerance and message/processing delays. Do not rely on synchronized wall clocks alone.
-8. After a long process pause, laptop sleep, or suspected clock discontinuity, the agent must re-confirm authority before continuing to serve workloads.
-9. A successful renewal must be validated against the current lease/grant so delayed responses cannot restore obsolete authority.
+Each placement receives a monotonically increasing generation.
 
-Lease duration must be consistent with heartbeat timing and failure-detection policy. The timeout, lease duration, and safety margin must be explicitly defined and tested.
+Example:
 
-B. Important Lease Limitations
-
-Lease expiry does not automatically guarantee that the old container has stopped.
-
-Potential failures include:
-
-* The Node Agent process crashes while its containers continue running.
-* The laptop sleeps or freezes.
-* A process pauses between checking its lease and performing an action.
-* A partition prevents the agent from receiving renewal messages.
-* The runtime remains active even after the agent loses contact.
-
-Monotonic-clock behavior during sleep must be checked separately on macOS and Windows.
-
-After a sufficiently long pause, the agent must re-confirm authority before continuing to serve workloads.
-
-If the agent process dies and the container continues running, a replacement may overlap until stale execution is detected and fenced. The system must measure and report that possibility rather than claiming it cannot happen.
-
-C. Placement Generations
-
-Each workload placement receives a monotonically increasing generation number.
-
-For example:
-
-Workload W
 Generation 1 → Node A
 Generation 2 → Node B
 Generation 3 → Node C
 
 Requirements:
 
-* Allocate generations atomically in the same transaction as the placement decision.
-* Persist generation values in SQLite.
-* Attach workload ID and generation labels to Docker containers.
-* Include the generation in execution, status, stop, and recovery requests where applicable.
-* Reject commands carrying older generations.
-* Prevent an older placement from replacing a newer placement.
-* Make repeated requests for the same placement safe to handle.
-* Validate generation ownership before destructive operations.
+* Persist generations.
+* Allocate them atomically.
+* Label containers with workload ID and generation.
+* Include generation information in execution and recovery requests.
+* Reject stale commands at the Node Agent.
+* Prevent older placements from overriding newer placements.
+* Handle repeated requests safely.
+* Validate authority before destructive operations.
 
-A generation number is useful only if the agent enforces it. Storing it in the database or container labels is not fencing by itself.
+Storing a generation in SQLite or in container labels is not sufficient. The Node Agent must enforce the relevant rules.
 
-The agent must reject stale commands based on authoritative, persisted placement information and must not allow delayed requests to reverse a newer placement.
-
-D. Failover
+Failover
 
 When a node becomes unavailable:
 
-1. Identify its affected workloads.
-2. Confirm that each workload still has desired state RUNNING.
-3. Check whether recovery is permitted under the current safety policy.
-4. Select an eligible destination node with sufficient capacity.
-5. Allocate a higher generation atomically.
-6. Execute the new placement through the destination agent.
-7. Verify the replacement’s container state and application health where supported.
-8. Persist the outcome and timestamped events.
-9. Handle timeouts and uncertain execution results without blindly issuing duplicate commands.
-10. Record failed or blocked recovery decisions and their reasons.
+1. Identify affected workloads.
+2. Check desired state.
+3. Evaluate recovery safety.
+4. Select an eligible destination.
+5. Allocate a higher generation.
+6. Execute the replacement.
+7. Verify container state and application health.
+8. Persist the result.
+9. Handle uncertain execution outcomes safely.
+10. Record failures, retries, and blocked decisions.
 
-Do not claim safe failover when fencing has not been implemented and verified.
+Completion test: Demonstrate lease enforcement, stale-command rejection, generation protection, and cross-node recovery through controlled failure and network-partition tests.
 
-E. Honest Safety Objective
+Do not claim zero duplicate execution without evidence from the actual fencing implementation.
 
-The target for tested scenarios is:
+Phase 4 — Second Real Laptop Integration
 
-* Stale commands are rejected.
-* Old generations cannot overwrite newer placements.
-* Duplicate-execution overlap is measured.
-* Any observed overlap is reported.
-* Failover decisions are based on explicit safety rules.
-
-Zero duplicate execution is a goal for defined and tested scenarios, not a universal guarantee that can be inferred from lease expiry alone.
-
-Phase 4 — Connect a Second Real Laptop
-
-Begin second-laptop integration as early as practical, in parallel with persistence work where possible.
-
-The Windows laptop is a major integration risk because Tailscale, Docker Desktop, Windows Firewall, and platform-specific behavior may differ from macOS.
+Status: Pending verification; immediate priority.
 
 Verify:
 
 * Tailscale connectivity.
-* Node registration.
-* Heartbeat delivery.
-* Control Plane-to-agent HTTP connectivity.
+* Node registration and heartbeat delivery.
+* Control Plane-to-Agent HTTP connectivity.
 * Windows Docker execution.
 * Remote container status.
-* Resource reporting.
-* Cross-node workload recovery.
-* Partition and recovery behavior.
+* Runtime resource reporting.
+* Workload execution on both laptops.
+* Controlled cross-node recovery.
 
-Two isolated agents on the Mac can help test APIs and scheduling, but they do not substitute for a real network-partition test between separate machines.
+This phase starts immediately. It does not replace the requirement to complete persistence and recovery safety.
 
 Phase 5 — Recovery Controls
+
+Status: Basic recovery exists; remaining controls need verification and implementation.
 
 Implement:
 
@@ -646,86 +877,75 @@ Implement:
 * Crash-loop detection.
 * Limits on concurrent recovery operations.
 * Capacity-aware recovery.
-* Recovery priorities or staggered scheduling where appropriate.
+* Recovery priorities or staggered scheduling.
 * Clear failure and escalation states.
 
-The system must avoid endlessly restarting failing workloads or overloading all remaining nodes during recovery.
+The system must prevent endless restarts and recovery storms.
 
 Phase 6 — Experimental Baselines
 
-Add configurable recovery policies so the same failure scenarios can be compared under different strategies.
+Status: Not implemented.
 
-Potential experimental modes:
+Support configurable policies such as:
 
 1. No automated recovery.
 2. Basic Docker restart behavior.
 3. Fixed-timeout detection.
 4. CloudHeal deterministic recovery.
 5. Controlled immediate-rescheduling baseline.
-6. Fencing-disabled baseline for isolated experiments only.
-7. Unlimited-retry baseline for isolated experiments only.
+6. Fencing-disabled baseline in isolated tests.
+7. Unlimited-retry baseline in isolated tests.
 
-Unsafe policies must be restricted to disposable test workloads and controlled environments. They must never silently become normal defaults.
+Unsafe policies must be restricted to disposable workloads and controlled environments.
 
-Build an experiment runner that:
-
-* Executes defined failure scenarios.
-* Records timestamps and observed outcomes.
-* Repeats each scenario.
-* Captures the selected policy.
-* Records failed and inconclusive trials.
-* Produces comparable results.
+Build an experiment runner that repeats scenarios and records actual outcomes.
 
 Phase 7 — Stable Application Gateway
 
-Add a stable URL for the demonstration application.
+Status: Not implemented.
 
-The gateway should route requests to the workload’s current location.
-
-Keep routing separate from scheduling and recovery.
+Provide a stable URL for the demonstration application.
 
 Test:
 
 * Routing before failure.
-* Routing after successful recovery.
-* Behavior while recovery is in progress.
-* Health-check failure.
+* Routing during recovery.
+* Routing after recovery.
+* Unhealthy applications.
 * Stale destination information.
 * Active connection behavior during failover.
 
-A stable URL does not automatically preserve existing TCP connections, sessions, or application state.
+A stable URL does not guarantee preservation of active TCP connections, sessions, or application state.
 
 Phase 8 — Evaluation
 
-Compare baseline and CloudHeal behavior across repeated failure scenarios.
+Status: Not implemented.
 
 Measure:
 
 Metric	Purpose
 Detection time	Time required to identify a failure
 Recovery time	Time required to restore the workload
-Recovery success rate	Fraction of recoveries that succeed
+Recovery success rate	Fraction of successful recoveries
 False-positive rate	Incorrect failure detections
 Unnecessary migrations	Workloads moved without sufficient justification
 Duplicate execution	Whether multiple copies execute concurrently
-Overlap duration	Duration of any duplicate execution
-Retry count	Repeated work caused by failures
+Overlap duration	Duration of duplicate execution
+Retry count	Repeated attempts caused by failures
 Cascade failures	Whether recovery overloads other nodes
 Application downtime	Time the application is unavailable
-AI diagnosis accuracy	Whether explanations match the evidence
-Unsafe actions blocked	Whether policy checks prevent prohibited actions
-Added latency	Additional delay from AI assistance
+Unsafe actions blocked	Actions rejected by safety policies
+AI diagnosis accuracy	Agreement between diagnosis and observed evidence
+Added latency	Extra delay from AI assistance
 API cost	Cost of AI-assisted decisions
 
-A target of approximately 20 repetitions per scenario is a useful initial goal when time and hardware permit it.
+Aim for approximately 20 repetitions per scenario when time and hardware permit.
 
-Report actual results. Distinguish measured results from estimates, expectations, and untested claims.
+Report measured results, including failed and inconclusive trials. Distinguish actual measurements from estimates.
 
 Phase 9 — AI-Assisted Diagnosis and Planning
 
-Introduce AI only after the deterministic recovery path is reliable.
-
-Diagnosis Agent
+Status: Deferred until deterministic recovery is reliable.
 
 The diagnosis component may inspect:
 
@@ -733,378 +953,173 @@ The diagnosis component may inspect:
 * Container logs.
 * Heartbeat history.
 * Resource measurements.
-* Application health checks.
+* Application-health checks.
 * Scheduling decisions.
 * Recovery history.
-* Previous failed attempts.
 
-It should produce structured assessments that distinguish observed facts from hypotheses.
+The planning component may recommend constrained actions such as restarting a stopped container, moving a workload, waiting for a temporary problem to clear, or escalating a repeated failure.
 
-Recovery Planning Agent
+A deterministic safety gate must validate proposed actions against:
 
-The planning component may recommend a constrained action such as:
-
-* Restart a stopped container.
-* Reschedule a workload.
-* Choose a node with sufficient capacity.
-* Wait for a temporary problem to clear.
-* Stop retrying a crash-looping workload.
-* Escalate a failure that cannot be resolved safely.
-
-Deterministic Safety Gate
-
-The LLM must not be the security boundary.
-
-Every proposed action must be checked against:
-
-* An explicit action registry.
 * Node eligibility.
 * Resource constraints.
 * Retry limits.
 * Workload requirements.
-* Recovery safety.
 * Lease and generation rules.
-* Approval requirements for sensitive actions.
+* Recovery safety.
+* Required approvals.
 
-Logs and external text are untrusted inputs. AI components must not receive unrestricted shell access or direct access to the Docker socket.
+The model must not receive unrestricted shell access or direct unrestricted Docker-socket access.
 
 Record:
 
-1. Evidence supplied.
+1. Evidence available.
 2. Diagnosis or recommendation.
-3. Policy decision.
-4. Executed action.
-5. Observed outcome.
+3. Policy and safety decision.
+4. Authorized action.
+5. Actual execution result.
+6. Observed outcome.
 
-The infrastructure must continue working if the model API is unavailable.
+The infrastructure must continue functioning when the model API is unavailable.
 
-LangGraph may be introduced later if explicit stateful workflow orchestration provides a clear benefit.
-
-A dashboard can be developed alongside later phases if it helps the demonstration, but it must not delay the recovery milestones.
-
-⸻
-
-9. SQLite and Persistence Design Requirements
-
-SQLite is the initial persistence choice because CloudHeal is a small student platform and does not need a large distributed database.
-
-The initial schema should cover these logical entities:
-
-Nodes
-
-* Node ID.
-* Hostname and relevant metadata.
-* Current health state.
-* Last heartbeat timestamp.
-* Runtime information.
-* Last-known resource information.
-* Lease/grant metadata where required.
-
-Workloads
-
-* Workload ID.
-* Name and image.
-* Desired state.
-* Actual state.
-* Current node assignment.
-* Current placement generation.
-* CPU and memory requirements.
-* Creation/update timestamps.
-* Recovery and retry metadata.
-
-Placement History
-
-* Workload ID.
-* Generation.
-* Assigned node.
-* Placement status.
-* Creation timestamp.
-* Relevant lease/authority metadata.
-
-Events
-
-* Event ID.
-* Event type.
-* Node/workload identifiers where applicable.
-* Generation where applicable.
-* Timestamp.
-* Structured event details.
-
-Use database constraints and transactions to protect consistency.
-
-Enable WAL mode and keep state-changing writes under a controlled single-writer strategy.
-
-Do not assume WAL makes concurrent distributed writes safe by itself. Only the Control Plane should be responsible for the authoritative placement transaction.
-
-Event history should be append-oriented. Corrections or state changes should produce additional events rather than silently erasing the record of what happened.
+A dashboard can be developed alongside later phases if useful, but it must not delay recovery milestones.
 
 ⸻
 
-10. Resource-Scheduling Requirements
+9. Resource-Scheduling Requirements
 
-The scheduler must use clearly defined resource semantics.
+CloudHeal must not assume that host physical RAM equals memory available to containers.
 
-For each node, distinguish:
+Docker Desktop runs containers inside a Linux VM with its own resource configuration.
 
-* Host CPU and memory information.
-* Runtime/VM CPU and memory limits.
-* Allocatable capacity reserved for CloudHeal workloads.
-* Existing CloudHeal allocations.
-* Remaining schedulable capacity.
+Distinguish:
 
-Do not subtract workload allocations from host physical RAM and then assume the result represents free Docker memory.
+1. Host physical memory.
+2. Runtime/VM memory capacity.
+3. Runtime memory availability, where reliably measurable.
+4. CloudHeal’s allocatable workload capacity.
+5. Existing CloudHeal workload allocations.
+6. Remaining schedulable capacity.
 
-Inspect Docker’s actual limits on every supported platform.
+Inspect Docker runtime information on both macOS and Windows.
 
-Resource measurements may become stale. The scheduler should account for the timestamp of the latest report and avoid treating missing information as proof of unlimited capacity.
+The scheduler must not interpret missing or stale resource reports as unlimited capacity.
 
-Capacity-aware recovery should reserve enough capacity to avoid making the remaining nodes unstable.
-
-⸻
-
-11. Current Verified Status
-
-11.1 Previously Implemented or Verified
-
-* Control Plane health endpoint.
-* Node registration and lookup.
-* Heartbeat processing.
-* System/runtime information reporting.
-* Workload creation and retrieval.
-* Basic scheduling.
-* Resource-aware scheduling logic.
-* Scheduler-to-Node-Agent Docker execution integration.
-* Periodic reconciliation.
-* Container status queries.
-* Detection of stopped or missing containers.
-* Basic stopped/missing-container recovery.
-* Replacement container verified running after recovery.
-* Relevant automated test runs reported during earlier sessions.
-
-These are historical results. Confirm current behavior and test output before relying on them.
-
-11.2 Under Investigation
-
-* Latest scheduler and recovery behavior.
-* Handling of Node Agent timeouts.
-* Distinguishing temporary communication failures from sustained node unavailability.
-* Workload failover after a node becomes unavailable.
-* Idempotent execution under uncertain HTTP outcomes.
-* Runtime resource reporting and memory-limit semantics.
-
-11.3 Not Yet Established as Complete
-
-* SQLite persistence.
-* Startup adoption/reconciliation of existing containers.
-* Persisted placement generations.
-* Lease renewal and expiry enforcement.
-* Agent-enforced fencing.
-* Reliable cross-node failover.
-* Real network-partition verification.
-* Duplicate-execution overlap measurement.
-* Windows/macOS multi-laptop integration.
-* Application health checks.
-* Crash-loop backoff and retry limits.
-* Recovery storm prevention.
-* Stable application gateway.
-* Experiment runner and comparative evaluation.
-* AI diagnosis and recovery planning.
-* Dashboard and final demonstration.
-
-Do not mark these features complete until their relevant behavior has been implemented and tested.
+Recovery decisions must preserve sufficient capacity to avoid destabilizing the remaining nodes.
 
 ⸻
 
-12. Immediate Development Instructions
+10. Immediate Development Commands
 
-The next session should not begin by writing a new failover implementation immediately.
+Start the Control Plane
 
-First establish the actual state of the repository.
-
-Step 1 — Inspect the Working Tree
-
-cd /Users/aniketsaini/Desktop/CloudHeal
+cd ~/Desktop/CloudHeal
 source .venv/bin/activate
-git status
-git diff
+uv run --package cloudheal-control-plane cloudheal-control-plane
 
-Do not overwrite uncommitted changes.
+Start the Mac Node Agent
 
-Step 2 — Inspect the Relevant Implementation
-
-cat control-plane/src/cloudheal_control_plane/registry.py
-cat control-plane/src/cloudheal_control_plane/workloads/reconciler.py
-cat control-plane/src/cloudheal_control_plane/workloads/scheduler.py
-cat control-plane/src/cloudheal_control_plane/workloads/models.py
-cat infrastructure/node-agent/src/cloudheal_node_agent/heartbeat.py
-cat infrastructure/node-agent/src/cloudheal_node_agent/runtime.py
-
-Inspect the current test locations and relevant fixtures.
-
-Step 3 — Establish Current Test Results
-
-Run the appropriate tests using the repository’s actual configuration.
-
-Previously documented example:
-
-uv run --package cloudheal-control-plane pytest control-plane/tests -q
-
-Adjust the command if the current test layout differs.
-
-Inspect failures before modifying code.
-
-Step 4 — Confirm the Current Recovery Behavior
-
-Verify:
-
-* How node health is calculated.
-* How heartbeat timeouts are handled.
-* How the reconciler handles agent communication failures.
-* How a workload’s assigned node is stored.
-* How containers are identified.
-* How uncertain execution results are handled.
-* Whether duplicate recovery attempts are possible.
-
-Step 5 — Confirm the Persistence Design
-
-Before coding, agree on:
-
-* Initial SQLite schema.
-* Transaction boundaries.
-* Single-writer strategy.
-* WAL configuration.
-* Event structure.
-* Placement generation allocation.
-* Startup reconciliation/adoption behavior.
-
-Step 6 — Implement Incrementally
-
-Start with persistence and event history, then verify node detection and recovery safety in the revised development order.
-
-Do not combine all phases into one large code change.
-
-Step 7 — Use a Consistent Test Pattern
-
-For each feature:
-
-1. Inspect.
-2. Implement the smallest appropriate change.
-3. Run unit tests.
-4. Run integration tests where possible.
-5. Inspect actual Docker state.
-6. Verify workload state.
-7. Record the result.
-8. Update project documentation after the milestone is confirmed.
-
-⸻
-
-13. Important Development Commands
-
-Activate the environment:
-
-cd /Users/aniketsaini/Desktop/CloudHeal
+cd ~/Desktop/CloudHeal
 source .venv/bin/activate
+uv run --package cloudheal-node-agent cloudheal-node-agent
 
-Check the working tree:
+Avoid launching duplicate processes if the services are already running.
 
-git status
-
-Check Control Plane health:
+Check Control Plane Health
 
 curl -s http://127.0.0.1:9000/health
 
-List nodes:
+List Nodes
 
 curl -s http://127.0.0.1:9000/nodes
 
-List workloads:
+List Workloads
 
 curl -s http://127.0.0.1:9000/workloads
 
-Open API documentation:
+Run Control Plane Tests
 
-http://127.0.0.1:9000/docs
+uv run --package cloudheal-control-plane pytest control-plane/tests -q
 
-Inspect running containers:
+Latest recorded result:
+
+23 passed in 0.33s
+
+This result is from 21 October 2026.
+
+Inspect Docker on the Mac
 
 docker ps
-
-Inspect all containers, including stopped ones:
-
 docker ps -a
 
-Use current repository configuration and current runtime information rather than assuming historical commands or addresses remain unchanged.
+Check Windows Tailscale and Docker
+
+tailscale status
+tailscale ip -4
+docker info
+docker ps
+
+Test Windows-to-Mac Connectivity
+
+Test-NetConnection 100.90.104.13 -Port 9000
+
+Use the verified current Mac Tailscale IP if it differs.
 
 ⸻
 
-14. Project Coordination and Documentation
+11. Minimum Final Scope
 
-Maintain two forms of context.
-
-Repository Context
-
-CloudHeal_CONTEXT.md
-
-This should contain:
-
-* Project architecture.
-* Repository-relative paths.
-* Current implementation status.
-* Verified milestones.
-* Pending milestones.
-* Important design decisions.
-* Test commands teammates can run.
-* Shared protocol and safety requirements.
-
-Avoid making the repository context dependent on one person’s local addresses or machine-specific configuration.
-
-Personal Development Notes
-
-These may contain:
-
-* Local startup commands.
-* Machine-specific network addresses.
-* Local environment details.
-* Individual debugging notes.
-* Current personal development tasks.
-
-Before expanding the project scope, discuss the revised plan and evaluation expectations with the project guide.
-
-The lease/fencing design should be reviewed by the team before implementation.
-
-⸻
-
-15. Minimum Final Scope
-
-The minimum defensible final CloudHeal implementation should include:
+The minimum defensible final implementation must demonstrate:
 
 1. Distributed workload execution across at least two real laptops.
 2. Persistent workload state and timestamped event history.
-3. Tested node health and suspect/unavailable detection.
+3. Tested node-health and suspect/unavailable detection.
 4. Leases and agent-enforced fencing integrated with generation-based placement.
 5. Safe, verified cross-node workload recovery.
 6. Bounded retries and crash-loop protection.
-7. Recovery concurrency/capacity controls.
+7. Recovery concurrency and capacity controls.
 8. A stable application URL across successful recovery.
 9. Configurable baseline policies and a repeatable experiment runner.
 10. Measured results across multiple failure scenarios.
 
-AI diagnosis, AI-assisted recovery planning, adaptive failure detection, image-aware scheduling, and an advanced dashboard are additional features if time permits.
+AI diagnosis, constrained AI planning, adaptive failure detection, image-aware scheduling, and an advanced dashboard are optional extensions if time permits.
 
 ⸻
 
-16. Final Project Direction
+12. Current Development Position and Handoff
 
-CloudHeal is a small distributed cloud platform that uses our team’s laptops as compute nodes.
+As of 22 October 2026:
 
-The initial infrastructure for node management, scheduling, Docker execution, reconciliation, and basic stopped-container recovery has been established.
+* The Control Plane and Node Agent foundations exist.
+* Workload scheduling and Docker execution have been implemented.
+* Basic stopped/missing-container recovery has been demonstrated.
+* SQLite persistence and execution-event recording have been introduced.
+* The latest recorded Control Plane test run passed 23 tests on 21 October.
+* A Mac-hosted nginx:latest workload was verified as running at the recorded time.
+* The Mac Control Plane and Node Agent were recently observed to be available, with Docker runtime reporting available.
+* Complete persistence, startup adoption, node-state transitions, leases, fencing, safe cross-node failover, the stable gateway, and experimental evaluation remain unfinished or unverified.
+* The Windows laptop has not yet been verified as a registered and executing CloudHeal node.
+* The Self-Healing Control System architecture is agreed, but its proposed package and AI modules have not yet been implemented.
 
-The next objective is to make recovery reliable when an entire laptop becomes unavailable.
+Next session: Start here
 
-That requires more than detecting a missed heartbeat. The system needs persistent state, explicit node-health transitions, safe placement decisions, lease handling, agent-enforced fencing, generation-based execution, and verification of the recovered workload.
+Immediate task: Connect the Windows laptop as the second real node.
 
-The project must also account for resource limits, retries, recovery storms, and the possibility that an unreachable node is still executing its workload.
+1. Inspect the Git working tree and preserve uncommitted changes.
+2. Verify the Mac Control Plane and Node Agent.
+3. Check the Windows Tailscale IP and Docker installation.
+4. Test Windows-to-Mac connectivity.
+5. Configure and start the existing Windows Node Agent.
+6. Verify registration and heartbeats.
+7. Execute a test workload on Windows.
+8. Verify actual Docker state and Control Plane workload state.
+9. Attempt controlled cross-node recovery only after both nodes can execute workloads.
+10. Continue persistence and event-history verification.
+11. Implement the node-health state machine.
+12. Implement leases, generations, and fencing as an integrated safety protocol.
+13. Strengthen recovery controls and perform repeatable experiments.
+14. Introduce AI diagnosis and planning only after deterministic recovery is reliable.
 
-After the deterministic recovery path works reliably, AI can assist with ambiguous diagnosis and constrained recovery planning.
+Guiding principle: Establish real multi-node execution first, persist state and events, define and enforce the recovery protocol, test actual failures, measure the results, and then introduce AI where it genuinely improves diagnosis and planning.
 
-Guiding principle: Build the infrastructure, persist the state, define the protocol, enforce recovery safety, test real failures, measure the results, and then add AI where it genuinely helps.
+Documentation note: This updated context has been written in this chat and incorporated into the ongoing project context. The local CloudHeal_CONTEXT.md, implementation plan, and source files have not been changed by this response. Repository files should be updated separately, preserving existing changes and recording only implementation and test evidence that has actually been verified.
