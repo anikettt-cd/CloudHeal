@@ -107,16 +107,17 @@ def get_node(node_id: str) -> NodeRecord | None:
 
 
 def refresh_node_statuses() -> None:
-    """Mark nodes healthy or unhealthy based on heartbeat age."""
+    """Mark nodes healthy or unhealthy and record health transitions."""
     now = datetime.now(timezone.utc)
     timeout = timedelta(seconds=HEARTBEAT_TIMEOUT_SECONDS)
 
     with get_connection() as connection:
         rows = connection.execute(
-            "SELECT node_id, last_seen FROM nodes"
+            "SELECT node_id, last_seen, status FROM nodes"
         ).fetchall()
 
         for row in rows:
+            previous_status = row["status"]
             last_seen_value = row["last_seen"]
 
             if last_seen_value is None:
@@ -143,27 +144,107 @@ def refresh_node_statuses() -> None:
                 (new_status, row["node_id"]),
             )
 
+            if (
+                previous_status == "healthy"
+                and new_status == "unhealthy"
+            ):
+                connection.execute(
+                    """
+                    INSERT INTO events (
+                        event_type,
+                        workload_id,
+                        node_id,
+                        details,
+                        created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "NODE_BECAME_UNHEALTHY",
+                        None,
+                        row["node_id"],
+                        json.dumps({
+                            "previous_status": previous_status,
+                            "new_status": new_status,
+                            "reason": "heartbeat_timeout",
+                        }),
+                        now.isoformat(),
+                    ),
+                )
+
 
 def heartbeat_node(
     node_id: str,
     system_info: dict[str, Any] | None = None,
     runtime_info: dict[str, Any] | None = None,
 ) -> NodeRecord | None:
-    """Update a registered node after receiving its heartbeat."""
-    node = get_node(node_id)
+    """Update a registered node and record recovery transitions."""
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM nodes WHERE node_id = ?",
+            (node_id,),
+        ).fetchone()
 
-    if node is None:
-        return None
+        if row is None:
+            return None
 
-    node.last_seen = datetime.now(timezone.utc)
-    node.status = "healthy"
+        previous_status = row["status"]
 
-    if system_info is not None:
-        node.system_info = system_info
+        now = datetime.now(timezone.utc)
 
-    if runtime_info is not None:
-        node.runtime_info = runtime_info
+        connection.execute(
+            """
+            UPDATE nodes
+            SET last_seen = ?,
+                status = 'healthy',
+                system_info = ?,
+                runtime_info = ?
+            WHERE node_id = ?
+            """,
+            (
+                now.isoformat(),
+                json.dumps(
+                    system_info
+                    if system_info is not None
+                    else json.loads(row["system_info"])
+                ),
+                json.dumps(
+                    runtime_info
+                    if runtime_info is not None
+                    else json.loads(row["runtime_info"])
+                ),
+                node_id,
+            ),
+        )
 
-    _save_node(node)
+        if previous_status == "unhealthy":
+            connection.execute(
+                """
+                INSERT INTO events (
+                    event_type,
+                    workload_id,
+                    node_id,
+                    details,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    "NODE_BECAME_HEALTHY",
+                    None,
+                    node_id,
+                    json.dumps({
+                        "previous_status": previous_status,
+                        "new_status": "healthy",
+                        "reason": "heartbeat_received",
+                    }),
+                    now.isoformat(),
+                ),
+            )
 
-    return node
+        updated_row = connection.execute(
+            "SELECT * FROM nodes WHERE node_id = ?",
+            (node_id,),
+        ).fetchone()
+
+    return _row_to_node(updated_row)

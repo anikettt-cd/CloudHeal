@@ -6,6 +6,18 @@ from cloudheal_control_plane.workloads.reconciler import WorkloadReconciler
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, status
 from cloudheal_control_plane.database import initialize_database
+from kubernetes.client.rest import ApiException
+from kubernetes import config
+from cloudheal_control_plane.infrastructure.incident_detector import (
+    detect_deployment_incident,
+)
+from cloudheal_control_plane.infrastructure.incident_monitor import (
+    incident_monitor_loop,
+)
+
+from cloudheal_control_plane.infrastructure.kubernetes_adapter import (
+    get_deployment_status,
+)
 
 from cloudheal_control_plane.registry import (
     NodeRecord,
@@ -48,17 +60,29 @@ async def reconciliation_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     initialize_database()
-    task = asyncio.create_task(reconciliation_loop())
+
+    reconciliation_task = asyncio.create_task(
+        reconciliation_loop(),
+        name="workload-reconciliation",
+    )
+
+    incident_monitor_task = asyncio.create_task(
+        incident_monitor_loop(),
+        name="incident-monitor",
+    )
 
     try:
         yield
     finally:
-        task.cancel()
+        tasks = [
+            reconciliation_task,
+            incident_monitor_task,
+        ]
 
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        for task in tasks:
+            task.cancel()
+
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 app = FastAPI(
     title="CloudHeal Control Plane",
@@ -175,3 +199,56 @@ def schedule_workload(workload_id: UUID):
             detail=str(exc),
         ) from exc
 
+@app.get("/infrastructure/kubernetes/namespaces/{namespace}/deployments/{name}")
+def inspect_kubernetes_deployment(namespace: str, name: str):
+    try:
+        return get_deployment_status(
+            namespace=namespace,
+            name=name,
+        )
+
+    except ApiException as exc:
+        if exc.status == 404:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Kubernetes Deployment not found",
+            ) from exc
+
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Kubernetes API request failed",
+        ) from exc
+
+    except (config.ConfigException, OSError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Kubernetes configuration is unavailable",
+        ) from exc
+
+@app.get(
+    "/incidents/kubernetes/namespaces/{namespace}/deployments/{name}"
+)
+def inspect_deployment_incident(namespace: str, name: str):
+    try:
+        return detect_deployment_incident(
+            namespace=namespace,
+            deployment_name=name,
+        )
+
+    except ApiException as exc:
+        if exc.status == 404:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Kubernetes Deployment not found",
+            ) from exc
+
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Kubernetes API request failed",
+        ) from exc
+
+    except (config.ConfigException, OSError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Kubernetes configuration is unavailable",
+        ) from exc
