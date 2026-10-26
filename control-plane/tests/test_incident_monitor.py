@@ -106,3 +106,106 @@ def test_monitor_continues_after_one_target_fails(monkeypatch):
     "healthy-app",
     get_deployment_status,
     )
+
+def test_auto_recovery_is_disabled_by_default(monkeypatch):
+    monkeypatch.delenv(
+        "CLOUDHEAL_AUTO_RECOVERY_ENABLED",
+        raising=False,
+    )
+
+    from cloudheal_control_plane.infrastructure.incident_monitor import (
+        is_auto_recovery_enabled,
+    )
+
+    assert is_auto_recovery_enabled() is False
+
+
+def test_monitor_invokes_recovery_when_enabled(monkeypatch):
+    monkeypatch.setenv(
+        "CLOUDHEAL_MONITOR_TARGETS",
+        "cloudheal-test/cloudheal-recovery-demo",
+    )
+    monkeypatch.setenv("CLOUDHEAL_AUTO_RECOVERY_ENABLED", "true")
+
+    result = {
+        "incident_detected": True,
+        "classification": "DEPLOYMENT_DEGRADED",
+        "namespace": "cloudheal-test",
+        "deployment": "cloudheal-recovery-demo",
+        "observed_at": "2026-10-26T10:00:00+00:00",
+        "incident": {"incident_id": 123},
+        "evidence": {"reasons": ["READY_REPLICAS_BELOW_DESIRED"]},
+    }
+
+    async def stop_after_one_cycle(_seconds):
+        raise asyncio.CancelledError
+
+    with (
+        patch(
+            "cloudheal_control_plane.infrastructure.incident_monitor."
+            "detect_deployment_incident",
+            return_value=result,
+        ),
+        patch(
+            "cloudheal_control_plane.infrastructure.incident_monitor."
+            "execute_recovery",
+        ) as mock_executor,
+        patch(
+            "cloudheal_control_plane.infrastructure.incident_monitor."
+            "asyncio.sleep",
+            new=AsyncMock(side_effect=stop_after_one_cycle),
+        ),
+    ):
+        try:
+            asyncio.run(incident_monitor_loop())
+        except asyncio.CancelledError:
+            pass
+
+    mock_executor.assert_called_once_with(
+        result ,
+        trigger="automatic",
+        )
+
+
+def test_monitor_does_not_recover_when_disabled(monkeypatch):
+    monkeypatch.setenv(
+        "CLOUDHEAL_MONITOR_TARGETS",
+        "cloudheal-test/cloudheal-recovery-demo",
+    )
+    monkeypatch.setenv("CLOUDHEAL_AUTO_RECOVERY_ENABLED", "false")
+
+    result = {
+        "incident_detected": True,
+        "classification": "DEPLOYMENT_DEGRADED",
+        "namespace": "cloudheal-test",
+        "deployment": "cloudheal-recovery-demo",
+        "observed_at": "2026-10-26T10:00:00+00:00",
+        "incident": {"incident_id": 124},
+        "evidence": {"reasons": ["READY_REPLICAS_BELOW_DESIRED"]},
+    }
+
+    async def stop_after_one_cycle(_seconds):
+        raise asyncio.CancelledError
+
+    with (
+        patch(
+            "cloudheal_control_plane.infrastructure.incident_monitor."
+            "detect_deployment_incident",
+            return_value=result,
+        ),
+        patch(
+            "cloudheal_control_plane.infrastructure.incident_monitor."
+            "execute_recovery",
+        ) as mock_executor,
+        patch(
+            "cloudheal_control_plane.infrastructure.incident_monitor."
+            "asyncio.sleep",
+            new=AsyncMock(side_effect=stop_after_one_cycle),
+        ),
+    ):
+        try:
+            asyncio.run(incident_monitor_loop())
+        except asyncio.CancelledError:
+            pass
+
+    mock_executor.assert_not_called()

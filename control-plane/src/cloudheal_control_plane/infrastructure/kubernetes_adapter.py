@@ -86,3 +86,36 @@ def get_deployment_status(namespace: str, name: str) -> dict:
         ],
         "pods": pods,
     }
+
+def restart_deployment(namespace: str, name: str) -> dict:
+    """Trigger a Deployment rollout restart through the Kubernetes API."""
+
+    from datetime import UTC, datetime
+
+    config.load_kube_config()
+
+    apps_api = client.AppsV1Api()
+    restarted_at = datetime.now(UTC).isoformat()
+
+    apps_api.patch_namespaced_deployment(
+        name=name,
+        namespace=namespace,
+        body={
+            "spec": {
+                "template": {
+                    "metadata": {
+                        "annotations": {
+                            "cloudheal.io/restarted-at": restarted_at,
+                        }
+                    }
+                }
+            }
+        },
+    )
+
+    return {
+        "namespace": namespace,
+        "deployment": name,
+        "restarted_at": restarted_at,
+        "accepted": True,
+    }

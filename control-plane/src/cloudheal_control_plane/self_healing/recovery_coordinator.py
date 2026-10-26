@@ -9,6 +9,7 @@ from cloudheal_control_plane.self_healing.recovery_policy import (
 def coordinate_recovery(
     detection: dict[str, Any],
     action: str = "RESTART_DEPLOYMENT",
+    trigger: str = "manual",
     claim_attempt_fn: Callable = claim_recovery_attempt,
     evaluate_policy_fn: Callable = evaluate_recovery_action,
 ) -> dict[str, Any]:
@@ -68,14 +69,15 @@ def coordinate_recovery(
         }
 
     claim = claim_attempt_fn(
-        incident_id=incident_id,
-        action=action,
+    incident_id=incident_id,
+    action=action,
         details={
             "namespace": namespace,
             "deployment": deployment_name,
             "resource_key": (
                 f"kubernetes:deployment:{namespace}:{deployment_name}"
             ),
+            "trigger": trigger,
         },
     )
 

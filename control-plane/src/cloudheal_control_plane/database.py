@@ -382,6 +382,43 @@ def claim_recovery_attempt(
                 "attempt_id": active_attempt["attempt_id"],
             }
 
+        # Automatic recovery is limited to one attempt per incident.
+        # Check persisted attempt details so this guard survives restarts.
+        is_automatic_recovery = (
+            isinstance(details, dict)
+            and details.get("trigger") == "automatic"
+        )
+
+        if is_automatic_recovery:
+            previous_attempts = connection.execute(
+                """
+                SELECT attempt_id, status, details
+                FROM recovery_attempts
+                WHERE incident_id = ?
+                ORDER BY attempt_id ASC
+                """,
+                (incident_id,),
+            ).fetchall()
+
+            for previous_attempt in previous_attempts:
+                try:
+                    previous_details = json.loads(
+                        previous_attempt["details"] or "{}"
+                    )
+                except (TypeError, json.JSONDecodeError):
+                    previous_details = {}
+
+                if (
+                    isinstance(previous_details, dict)
+                    and previous_details.get("trigger") == "automatic"
+                ):
+                    return {
+                        "claimed": False,
+                        "reason_code": "AUTO_RECOVERY_ALREADY_ATTEMPTED",
+                        "attempt_id": previous_attempt["attempt_id"],
+                        "previous_status": previous_attempt["status"],
+                    }
+
         cursor = connection.execute(
             """
             INSERT INTO recovery_attempts (
@@ -453,9 +490,9 @@ def finish_recovery_attempt(
 
         attempt = connection.execute(
             """
-            SELECT status
-            FROM recovery_attempts
-            WHERE attempt_id = ?
+           SELECT status, details
+           FROM recovery_attempts
+           WHERE attempt_id = ?
             """,
             (attempt_id,),
         ).fetchone()
@@ -473,6 +510,21 @@ def finish_recovery_attempt(
                 "status": attempt["status"],
             }
 
+        try:
+            existing_details = json.loads(
+                attempt["details"] or "{}"
+            )
+        except (TypeError, json.JSONDecodeError):
+            existing_details = {}
+
+        if not isinstance(existing_details, dict):
+            existing_details = {}
+
+        final_details = {
+            **existing_details,
+            **(details or {}),
+        }
+
         connection.execute(
             """
             UPDATE recovery_attempts
@@ -486,7 +538,7 @@ def finish_recovery_attempt(
             (
                 status,
                 reason_code,
-                json.dumps(details or {}),
+                json.dumps(final_details),
                 now,
                 now,
                 attempt_id,
@@ -547,3 +599,48 @@ def get_unresolved_recovery_attempts() -> list[dict]:
         attempts.append(attempt)
 
     return attempts
+
+
+def list_incident_history(limit: int = 50) -> list[dict]:
+    """Return recent incidents with their associated recovery attempts."""
+    limit = max(1, min(int(limit), 200))
+
+    with get_connection() as connection:
+        incidents = connection.execute(
+            """
+            SELECT incident_id, resource_key, status, classification,
+                   first_seen, last_seen, resolved_at, evidence
+            FROM incidents
+            ORDER BY incident_id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+        history = []
+
+        for row in incidents:
+            incident = dict(row)
+            incident["evidence"] = json.loads(incident["evidence"] or "{}")
+
+            attempts = connection.execute(
+                """
+                SELECT attempt_id, action, status, reason_code, details,
+                       started_at, updated_at, finished_at
+                FROM recovery_attempts
+                WHERE incident_id = ?
+                ORDER BY attempt_id DESC
+                """,
+                (incident["incident_id"],),
+            ).fetchall()
+
+            incident["recovery_attempts"] = []
+
+            for attempt_row in attempts:
+                attempt = dict(attempt_row)
+                attempt["details"] = json.loads(attempt["details"] or "{}")
+                incident["recovery_attempts"].append(attempt)
+
+            history.append(incident)
+
+        return history

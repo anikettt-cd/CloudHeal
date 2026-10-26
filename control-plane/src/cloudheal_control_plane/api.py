@@ -5,7 +5,7 @@ from typing import Any
 from cloudheal_control_plane.workloads.reconciler import WorkloadReconciler
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, status
-from cloudheal_control_plane.database import initialize_database
+from cloudheal_control_plane.database import initialize_database, list_incident_history
 from kubernetes.client.rest import ApiException
 from kubernetes import config
 from cloudheal_control_plane.infrastructure.incident_detector import (
@@ -14,6 +14,7 @@ from cloudheal_control_plane.infrastructure.incident_detector import (
 from cloudheal_control_plane.infrastructure.incident_monitor import (
     incident_monitor_loop,
 )
+from cloudheal_control_plane.self_healing.recovery_executor import execute_recovery
 
 from cloudheal_control_plane.infrastructure.kubernetes_adapter import (
     get_deployment_status,
@@ -99,6 +100,18 @@ workload_registry = WorkloadRegistry()
 workload_service = WorkloadService(workload_registry)
 workload_scheduler = WorkloadScheduler(workload_service)
 workload_reconciler = WorkloadReconciler(workload_service)
+
+
+@app.get("/incidents/history")
+def incident_history(limit: int = 50):
+    """Return recent incidents and their recovery attempts."""
+    try:
+        return {"incidents": list_incident_history(limit)}
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid incident history limit",
+        ) from exc
 
 
 @app.get("/health")
@@ -234,6 +247,53 @@ def inspect_deployment_incident(namespace: str, name: str):
             namespace=namespace,
             deployment_name=name,
         )
+
+    except ApiException as exc:
+        if exc.status == 404:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Kubernetes Deployment not found",
+            ) from exc
+
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Kubernetes API request failed",
+        ) from exc
+
+    except (config.ConfigException, OSError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Kubernetes configuration is unavailable",
+        ) from exc
+
+
+@app.post(
+    "/incidents/kubernetes/namespaces/{namespace}/deployments/{name}/recover"
+)
+def recover_deployment(namespace: str, name: str):
+    """Attempt policy-approved recovery of a currently degraded Deployment."""
+
+    try:
+        detection = detect_deployment_incident(
+            namespace=namespace,
+            deployment_name=name,
+        )
+
+        if not detection.get("incident_detected"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Deployment is healthy; recovery was not started",
+            )
+
+        result = execute_recovery(detection)
+
+        if not result.get("accepted"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=result,
+            )
+
+        return result
 
     except ApiException as exc:
         if exc.status == 404:

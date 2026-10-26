@@ -134,3 +134,37 @@ def test_repeated_resolution_does_not_duplicate_event():
     ]
 
     assert len(matching_events) == 1
+
+def test_failed_automatic_attempt_blocks_another_automatic_attempt():
+    incident = create_open_incident()
+
+    details = {
+        "namespace": "default",
+        "deployment": "api",
+        "trigger": "automatic",
+    }
+
+    first = claim_recovery_attempt(
+        incident_id=incident["incident_id"],
+        action="RESTART_DEPLOYMENT",
+        details=details,
+    )
+
+    assert first["claimed"] is True
+
+    finish_result = finish_recovery_attempt(
+        attempt_id=first["attempt_id"],
+        status="FAILED",
+        reason_code="RECOVERY_FAILED",
+    )
+
+    assert finish_result["updated"] is True
+
+    second = claim_recovery_attempt(
+        incident_id=incident["incident_id"],
+        action="RESTART_DEPLOYMENT",
+        details=details,
+    )
+
+    assert second["claimed"] is False
+    assert second["reason_code"] == "AUTO_RECOVERY_ALREADY_ATTEMPTED"

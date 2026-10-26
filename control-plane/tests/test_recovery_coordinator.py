@@ -1,4 +1,4 @@
-from unittest.mock import Mock
+from unittest.mock import Mock , patch
 
 from cloudheal_control_plane.self_healing.recovery_coordinator import (
     coordinate_recovery,
@@ -44,6 +44,7 @@ def test_claims_recovery_without_executing_it():
             "namespace": "default",
             "deployment": "test-api",
             "resource_key": "kubernetes:deployment:default:test-api",
+            "trigger": "manual",
         },
     )
 

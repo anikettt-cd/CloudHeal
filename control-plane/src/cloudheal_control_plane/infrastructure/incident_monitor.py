@@ -9,6 +9,10 @@ from cloudheal_control_plane.infrastructure.kubernetes_adapter import (
     get_deployment_status,
 )
 
+from cloudheal_control_plane.self_healing.recovery_executor import (
+    execute_recovery,
+)
+
 __all__ = ["detect_deployment_incident"]
 
 
@@ -61,6 +65,14 @@ def get_monitor_interval() -> int:
         )
         return DEFAULT_INTERVAL_SECONDS
 
+def is_auto_recovery_enabled() -> bool:
+    """Return whether automatic recovery is explicitly enabled."""
+
+    return os.getenv(
+        "CLOUDHEAL_AUTO_RECOVERY_ENABLED",
+        "false",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
 
 async def incident_monitor_loop() -> None:
     """Periodically inspect configured Deployments and record incidents."""
@@ -70,7 +82,7 @@ async def incident_monitor_loop() -> None:
         get_monitor_targets(),
         get_monitor_interval(),
     )
-
+    attempted_incident_ids: set[int] = set()
     while True:
         try:
             targets = get_monitor_targets()
@@ -98,6 +110,49 @@ async def incident_monitor_loop() -> None:
 
 
                     if result["incident_detected"]:
+
+                        if is_auto_recovery_enabled():
+                            incident = result.get("incident")
+                            incident_id = (
+                                incident.get("incident_id")
+                                if isinstance(incident, dict)
+                                else None
+                            )
+
+                            if (
+                                not isinstance(incident_id, int)
+                                or isinstance(incident_id, bool)
+                            ):
+                                logger.error(
+                                    "Automatic recovery skipped: invalid "
+                                    "incident ID for %s/%s",
+                                    namespace,
+                                    deployment_name,
+                                )
+                            elif incident_id in attempted_incident_ids:
+                                logger.info(
+                                    "Automatic recovery already attempted "
+                                    "for incident %s; skipping",
+                                    incident_id,
+                                )
+                            else:
+                                # Prevent another attempt on every monitor
+                                # cycle during this monitor process.
+                                attempted_incident_ids.add(incident_id)
+
+                                recovery_result = await asyncio.to_thread(
+                                    execute_recovery,
+                                    result,
+                                    trigger="automatic",
+                                )
+
+                                logger.info(
+                                    "Automatic recovery result: "
+                                    "incident_id=%s result=%s",
+                                    incident_id,
+                                    recovery_result,
+                                )
+
                         logger.warning(
                             "Incident detected: namespace=%s deployment=%s "
                             "classification=%s observed_at=%s",

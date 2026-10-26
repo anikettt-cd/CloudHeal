@@ -81,3 +81,62 @@ def test_missing_kubeconfig_returns_503():
     assert response.json()["detail"] == (
         "Kubernetes configuration is unavailable"
     )
+
+def test_recovery_endpoint_rejects_healthy_deployment():
+    healthy_detection = {
+        "incident_detected": False,
+        "classification": "HEALTHY",
+        "namespace": "cloudheal-test",
+        "deployment": "nginx-test",
+    }
+
+    with patch(
+        "cloudheal_control_plane.api.detect_deployment_incident",
+        return_value=healthy_detection,
+    ), patch(
+        "cloudheal_control_plane.api.execute_recovery"
+    ) as mock_executor:
+        with TestClient(app) as client:
+            response = client.post(
+                BASE_PATH + "/recover"
+            )
+
+    assert response.status_code == 409
+    mock_executor.assert_not_called()
+
+
+def test_recovery_endpoint_executes_for_degraded_deployment():
+    degraded_detection = {
+        "incident_detected": True,
+        "classification": "DEPLOYMENT_DEGRADED",
+        "namespace": "cloudheal-test",
+        "deployment": "nginx-test",
+        "incident": {
+            "incident_id": 123,
+            "status": "OPEN",
+            "classification": "DEPLOYMENT_DEGRADED",
+            "evidence": {"reasons": ["READY_REPLICAS_BELOW_DESIRED"]},
+        },
+    }
+    recovery_result = {
+        "accepted": True,
+        "stage": "VERIFICATION",
+        "status": "SUCCEEDED",
+        "reason_code": "DEPLOYMENT_HEALTHY_AFTER_RESTART",
+    }
+
+    with patch(
+        "cloudheal_control_plane.api.detect_deployment_incident",
+        return_value=degraded_detection,
+    ), patch(
+        "cloudheal_control_plane.api.execute_recovery",
+        return_value=recovery_result,
+    ) as mock_executor:
+        with TestClient(app) as client:
+            response = client.post(
+                BASE_PATH + "/recover"
+            )
+
+    assert response.status_code == 200
+    assert response.json() == recovery_result
+    mock_executor.assert_called_once_with(degraded_detection)
