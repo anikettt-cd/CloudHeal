@@ -1,9 +1,10 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from uuid import UUID
-from typing import Any
+from typing import Any, Literal
 from cloudheal_control_plane.workloads.reconciler import WorkloadReconciler
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from fastapi import FastAPI, HTTPException, status
 from cloudheal_control_plane.database import initialize_database, list_incident_history
 from kubernetes.client.rest import ApiException
@@ -18,6 +19,13 @@ from cloudheal_control_plane.self_healing.recovery_executor import execute_recov
 
 from cloudheal_control_plane.infrastructure.kubernetes_adapter import (
     get_deployment_status,
+)
+from cloudheal_control_plane.infrastructure.kubernetes_deployments import (
+    create_deployment as create_k8s_deployment,
+    create_service as create_k8s_service,
+    delete_deployment as delete_k8s_deployment,
+    ensure_namespace as ensure_k8s_namespace,
+    scale_deployment as scale_k8s_deployment,
 )
 
 from cloudheal_control_plane.registry import (
@@ -39,6 +47,9 @@ from cloudheal_control_plane.workloads.scheduler import (
     SchedulingError,
     WorkloadScheduler,
 )
+
+logger = logging.getLogger(__name__)
+
 
 async def reconciliation_loop():
     while True:
@@ -94,6 +105,31 @@ app = FastAPI(
 class NodeHeartbeat(BaseModel):
     system_info: dict[str, Any] | None = None
     runtime_info: dict[str, Any] | None = None
+
+
+class KubernetesDeploymentCreate(BaseModel):
+    name: str = Field(
+        min_length=1,
+        max_length=253,
+        pattern=r"^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$",
+    )
+    image: str = Field(min_length=1)
+    replicas: int = Field(default=1, ge=1, le=20)
+    container_port: int = Field(default=80, ge=1, le=65535)
+    service_type: Literal["ClusterIP", "NodePort", "LoadBalancer"] = "NodePort"
+    service_port: int = Field(default=80, ge=1, le=65535)
+    target_port: int | None = Field(default=None, ge=1, le=65535)
+
+    @field_validator("image")
+    @classmethod
+    def validate_image(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("image is required")
+        return value
+
+
+class KubernetesDeploymentScale(BaseModel):
+    replicas: int = Field(ge=0, le=20)
 
 # Shared workload-management instances.
 workload_registry = WorkloadRegistry()
@@ -220,6 +256,9 @@ def inspect_kubernetes_deployment(namespace: str, name: str):
             name=name,
         )
 
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     except ApiException as exc:
         if exc.status == 404:
             raise HTTPException(
@@ -247,6 +286,9 @@ def inspect_deployment_incident(namespace: str, name: str):
             namespace=namespace,
             deployment_name=name,
         )
+
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     except ApiException as exc:
         if exc.status == 404:
@@ -295,6 +337,9 @@ def recover_deployment(namespace: str, name: str):
 
         return result
 
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     except ApiException as exc:
         if exc.status == 404:
             raise HTTPException(
@@ -312,3 +357,97 @@ def recover_deployment(namespace: str, name: str):
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Kubernetes configuration is unavailable",
         ) from exc
+
+
+
+@app.post("/infrastructure/kubernetes/namespaces/{namespace}/deployments", status_code=201)
+def create_kubernetes_deployment(namespace: str, request: KubernetesDeploymentCreate):
+    deployment_created = False
+    created_deployment_name = request.name
+
+    try:
+        ensure_k8s_namespace(namespace)
+
+        deployment = create_k8s_deployment(
+            namespace=namespace,
+            name=request.name,
+            image=request.image,
+            replicas=request.replicas,
+            container_port=request.container_port,
+        )
+        deployment_created = True
+
+        target_port = request.target_port or request.container_port
+
+        service = create_k8s_service(
+            namespace=namespace,
+            name=request.name,
+            selector={"app": request.name},
+            port=request.service_port,
+            target_port=target_port,
+            service_type=request.service_type,
+        )
+
+        return {"deployment": deployment, "service": service}
+
+    except ValueError as exc:
+        if deployment_created:
+            _cleanup_created_deployment(namespace, created_deployment_name)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    except ApiException as exc:
+        if deployment_created:
+            _cleanup_created_deployment(namespace, created_deployment_name)
+
+        if exc.status == 409:
+            raise HTTPException(status_code=409, detail="Kubernetes resource already exists") from exc
+        raise HTTPException(status_code=502, detail="Kubernetes API request failed") from exc
+
+    except (config.ConfigException, OSError) as exc:
+        if deployment_created:
+            _cleanup_created_deployment(namespace, created_deployment_name)
+        raise HTTPException(status_code=503, detail="Kubernetes configuration is unavailable") from exc
+
+
+def _cleanup_created_deployment(namespace: str, name: str) -> None:
+    try:
+        delete_k8s_deployment(namespace=namespace, name=name)
+    except Exception as cleanup_exc:  # pragma: no cover - best effort
+        logger.warning(
+            "Failed to clean up Deployment %s/%s after partial application creation: %s",
+            namespace,
+            name,
+            cleanup_exc,
+        )
+
+
+@app.post("/infrastructure/kubernetes/namespaces/{namespace}/deployments/{name}/scale")
+def scale_kubernetes_deployment(namespace: str, name: str, request: KubernetesDeploymentScale):
+    try:
+        return scale_k8s_deployment(
+            namespace=namespace,
+            name=name,
+            replicas=request.replicas,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ApiException as exc:
+        if exc.status == 404:
+            raise HTTPException(status_code=404, detail="Kubernetes Deployment not found") from exc
+        raise HTTPException(status_code=502, detail="Kubernetes API request failed") from exc
+    except (config.ConfigException, OSError) as exc:
+        raise HTTPException(status_code=503, detail="Kubernetes configuration is unavailable") from exc
+
+
+@app.delete("/infrastructure/kubernetes/namespaces/{namespace}/deployments/{name}")
+def delete_kubernetes_deployment(namespace: str, name: str):
+    try:
+        return delete_k8s_deployment(namespace=namespace, name=name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ApiException as exc:
+        if exc.status == 404:
+            raise HTTPException(status_code=404, detail="Kubernetes Deployment not found") from exc
+        raise HTTPException(status_code=502, detail="Kubernetes API request failed") from exc
+    except (config.ConfigException, OSError) as exc:
+        raise HTTPException(status_code=503, detail="Kubernetes configuration is unavailable") from exc
