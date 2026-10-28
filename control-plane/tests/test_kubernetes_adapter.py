@@ -581,3 +581,32 @@ def test_kubernetes_api_failure_is_propagated(mock_config, mock_apps):
         )
 
     assert exc_info.value.status == 500
+
+
+@patch(
+    "cloudheal_control_plane.infrastructure.kubernetes_adapter.client.CoreV1Api"
+)
+@patch(
+    "cloudheal_control_plane.infrastructure.kubernetes_adapter.client.AppsV1Api"
+)
+@patch(
+    "cloudheal_control_plane.infrastructure.kubernetes_adapter.config.load_kube_config"
+)
+def test_deployment_with_empty_selector_does_not_list_all_pods(mock_config, mock_apps, mock_core):
+    deployment = SimpleNamespace(
+        spec=SimpleNamespace(
+            replicas=1,
+            selector=SimpleNamespace(match_labels={}),
+        ),
+        status=SimpleNamespace(
+            ready_replicas=1,
+            available_replicas=1,
+            conditions=[],
+        ),
+    )
+    mock_apps.return_value.read_namespaced_deployment.return_value = deployment
+
+    result = get_deployment_status(namespace="cloudheal-test", name="nginx-test")
+
+    assert result["pods"] == []
+    mock_core.return_value.list_namespaced_pod.assert_not_called()

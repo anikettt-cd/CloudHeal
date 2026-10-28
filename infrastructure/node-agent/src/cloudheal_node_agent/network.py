@@ -8,6 +8,8 @@ def get_local_ip() -> str:
             ["tailscale", "ip", "-4"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             check=True,
         )

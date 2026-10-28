@@ -28,6 +28,8 @@ def get_runtime_info() -> dict:
             ["docker", "info", "--format", "{{json .}}"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
             check=False,
         )
@@ -88,6 +90,8 @@ def get_runtime_info() -> dict:
             ["docker", "version", "--format", "{{.Server.Version}}"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             check=False,
         )

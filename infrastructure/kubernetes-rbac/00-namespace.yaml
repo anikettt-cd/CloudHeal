@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cloudheal-system
+  labels:
+    app.kubernetes.io/name: cloudheal
+    app.kubernetes.io/component: discovery

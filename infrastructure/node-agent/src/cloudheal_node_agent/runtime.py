@@ -20,6 +20,8 @@ def run_container(
             ["docker", "container", "inspect", container_name],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             check=False,
         )
@@ -43,6 +45,8 @@ def run_container(
                     ["docker", "start", container_name],
                     capture_output=True,
                     text=True,
+            encoding="utf-8",
+            errors="replace",
                     timeout=30,
                     check=False,
                 )
@@ -78,6 +82,8 @@ def run_container(
                 command,
                 capture_output=True,
                 text=True,
+            encoding="utf-8",
+            errors="replace",
                 timeout=300,
                 check=False,
             )
@@ -103,6 +109,8 @@ def run_container(
             ["docker", "container", "inspect", container_id],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             check=False,
         )
@@ -143,6 +151,8 @@ def get_container_status(workload_id: UUID) -> dict:
             ["docker", "container", "inspect", container_name],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             check=False,
         )

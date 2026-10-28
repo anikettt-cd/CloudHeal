@@ -1,3 +1,4 @@
+
 import os
 import re
 from pathlib import Path
@@ -79,21 +80,26 @@ def get_deployment_status(namespace: str, name: str) -> dict:
     status = deployment.status
 
     # Find Pods belonging to this Deployment.
-    match_labels = spec.selector.match_labels or {}
-
-    label_selector = ",".join(
-        f"{key}={value}"
-        for key, value in match_labels.items()
-    )
-
-    pods_response = core_api.list_namespaced_pod(
-        namespace=ns,
-        label_selector=label_selector,
-    )
+    selector = getattr(spec, "selector", None)
+    match_labels = getattr(selector, "match_labels", None) or {}
 
     pods = []
 
-    for pod in pods_response.items:
+    if match_labels:
+        label_selector = ",".join(
+            f"{key}={value}"
+            for key, value in match_labels.items()
+        )
+
+        pods_response = core_api.list_namespaced_pod(
+            namespace=ns,
+            label_selector=label_selector,
+        )
+        pod_items = pods_response.items
+    else:
+        pod_items = []
+
+    for pod in pod_items:
         pod_status = pod.status
         container_statuses = pod_status.container_statuses or []
 
@@ -180,4 +186,8 @@ def restart_deployment(namespace: str, name: str) -> dict:
         "restarted_at": restarted_at,
         "accepted": True,
     }
+
+
+# Read-only Kubernetes discovery helpers (re-exported for backwards compatibility).
+from .kubernetes_discovery import *  # noqa: F401,F403
 

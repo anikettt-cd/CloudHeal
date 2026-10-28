@@ -1,4 +1,5 @@
 import platform
+from pathlib import Path
 
 import psutil
 
@@ -8,7 +9,12 @@ from cloudheal_node_agent.models import CPUInfo, DiskInfo, MemoryInfo
 def get_system_info() -> dict:
     cpu_usage = psutil.cpu_percent(interval=1)
     memory = psutil.virtual_memory()
-    disk = psutil.disk_usage("/")
+    disk_path = (
+        Path.home().anchor
+        if platform.system() == "Windows"
+        else "/"
+    )
+    disk = psutil.disk_usage(disk_path)
 
     return {
         "hostname": platform.node(),

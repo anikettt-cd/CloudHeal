@@ -9,6 +9,14 @@ from fastapi import FastAPI, HTTPException, status
 from cloudheal_control_plane.database import initialize_database, list_incident_history
 from kubernetes.client.rest import ApiException
 from kubernetes import config
+from cloudheal_control_plane.infrastructure.kubernetes_discovery import (
+    KubernetesAuthenticationError,
+    KubernetesAuthorizationError,
+    KubernetesConfigurationError,
+    KubernetesConnectivityError,
+    KubernetesDiscoveryError,
+    KubernetesTimeoutError,
+)
 from cloudheal_control_plane.infrastructure.incident_detector import (
     detect_deployment_incident,
 )
@@ -19,6 +27,16 @@ from cloudheal_control_plane.self_healing.recovery_executor import execute_recov
 
 from cloudheal_control_plane.infrastructure.kubernetes_adapter import (
     get_deployment_status,
+)
+from cloudheal_control_plane.infrastructure.kubernetes_discovery import (
+    check_api_connectivity,
+    discover_kubernetes_cluster,
+    list_deployments as list_k8s_deployments,
+    list_events as list_k8s_events,
+    list_namespaces as list_k8s_namespaces,
+    list_nodes as list_k8s_nodes,
+    list_pods as list_k8s_pods,
+    get_kubernetes_version,
 )
 from cloudheal_control_plane.infrastructure.kubernetes_deployments import (
     create_deployment as create_k8s_deployment,
@@ -451,3 +469,113 @@ def delete_kubernetes_deployment(namespace: str, name: str):
         raise HTTPException(status_code=502, detail="Kubernetes API request failed") from exc
     except (config.ConfigException, OSError) as exc:
         raise HTTPException(status_code=503, detail="Kubernetes configuration is unavailable") from exc
+
+
+def _kubernetes_discovery_http_exception(exc: Exception):
+    if isinstance(exc, ValueError):
+        return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, KubernetesAuthenticationError):
+        return HTTPException(status_code=401, detail=str(exc))
+    if isinstance(exc, KubernetesAuthorizationError):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, KubernetesConfigurationError):
+        return HTTPException(status_code=503, detail="Kubernetes configuration is unavailable")
+    if isinstance(exc, KubernetesConnectivityError):
+        return HTTPException(status_code=503, detail="Kubernetes API server is unavailable")
+    if isinstance(exc, KubernetesTimeoutError):
+        return HTTPException(status_code=504, detail="Kubernetes API request timed out")
+    if isinstance(exc, ApiException):
+        if exc.status == 404:
+            return HTTPException(status_code=404, detail="Kubernetes resource not found")
+        return HTTPException(status_code=502, detail="Kubernetes API request failed")
+    if isinstance(exc, (config.ConfigException, OSError)):
+        return HTTPException(status_code=503, detail="Kubernetes configuration is unavailable")
+    return HTTPException(status_code=500, detail="Kubernetes discovery failed")
+
+
+@app.get("/infrastructure/kubernetes/discovery")
+def discover_kubernetes_cluster_endpoint(namespace: str | None = None, include_events: bool = True):
+    try:
+        return discover_kubernetes_cluster(namespace=namespace, include_events=include_events)
+    except Exception as exc:  # noqa: BLE001
+        raise _kubernetes_discovery_http_exception(exc) from exc
+
+
+@app.get("/infrastructure/kubernetes/cluster")
+def discover_kubernetes_cluster_alias(namespace: str | None = None, include_events: bool = True):
+    try:
+        return discover_kubernetes_cluster(namespace=namespace, include_events=include_events)
+    except Exception as exc:  # noqa: BLE001
+        raise _kubernetes_discovery_http_exception(exc) from exc
+
+
+@app.get("/infrastructure/kubernetes/cluster/discovery")
+def discover_kubernetes_cluster_alias_2(namespace: str | None = None, include_events: bool = True):
+    try:
+        return discover_kubernetes_cluster(namespace=namespace, include_events=include_events)
+    except Exception as exc:  # noqa: BLE001
+        raise _kubernetes_discovery_http_exception(exc) from exc
+
+
+@app.get("/infrastructure/kubernetes/inventory")
+def discover_kubernetes_inventory_endpoint(namespace: str | None = None, include_events: bool = True):
+    try:
+        return discover_kubernetes_cluster(namespace=namespace, include_events=include_events)
+    except Exception as exc:  # noqa: BLE001
+        raise _kubernetes_discovery_http_exception(exc) from exc
+
+
+@app.get("/infrastructure/kubernetes/version")
+def get_kubernetes_version_endpoint():
+    try:
+        return get_kubernetes_version()
+    except Exception as exc:  # noqa: BLE001
+        raise _kubernetes_discovery_http_exception(exc) from exc
+
+
+@app.get("/infrastructure/kubernetes/connectivity")
+def get_kubernetes_connectivity_endpoint():
+    try:
+        return check_api_connectivity()
+    except Exception as exc:  # noqa: BLE001
+        raise _kubernetes_discovery_http_exception(exc) from exc
+
+
+@app.get("/infrastructure/kubernetes/nodes")
+def list_kubernetes_nodes_endpoint():
+    try:
+        return list_k8s_nodes()
+    except Exception as exc:  # noqa: BLE001
+        raise _kubernetes_discovery_http_exception(exc) from exc
+
+
+@app.get("/infrastructure/kubernetes/namespaces")
+def list_kubernetes_namespaces_endpoint():
+    try:
+        return list_k8s_namespaces()
+    except Exception as exc:  # noqa: BLE001
+        raise _kubernetes_discovery_http_exception(exc) from exc
+
+
+@app.get("/infrastructure/kubernetes/pods")
+def list_kubernetes_pods_endpoint(namespace: str | None = None):
+    try:
+        return list_k8s_pods(namespace=namespace)
+    except Exception as exc:  # noqa: BLE001
+        raise _kubernetes_discovery_http_exception(exc) from exc
+
+
+@app.get("/infrastructure/kubernetes/deployments")
+def list_kubernetes_deployments_endpoint(namespace: str | None = None):
+    try:
+        return list_k8s_deployments(namespace=namespace)
+    except Exception as exc:  # noqa: BLE001
+        raise _kubernetes_discovery_http_exception(exc) from exc
+
+
+@app.get("/infrastructure/kubernetes/events")
+def list_kubernetes_events_endpoint(namespace: str | None = None):
+    try:
+        return list_k8s_events(namespace=namespace)
+    except Exception as exc:  # noqa: BLE001
+        raise _kubernetes_discovery_http_exception(exc) from exc

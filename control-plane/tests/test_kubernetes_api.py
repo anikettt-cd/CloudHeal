@@ -376,3 +376,23 @@ def test_create_kubernetes_deployment_invalid_namespace_returns_400():
             )
 
     assert response.status_code == 400
+
+def test_kubernetes_discovery_endpoint_returns_payload():
+    expected = {"status": "ok", "connected": True, "nodes": []}
+    with patch("cloudheal_control_plane.api.discover_kubernetes_cluster", return_value=expected):
+        with TestClient(app) as client:
+            response = client.get("/infrastructure/kubernetes/discovery")
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
+def test_kubernetes_discovery_auth_failure_returns_401():
+    from cloudheal_control_plane.infrastructure.kubernetes_discovery import (
+        KubernetesAuthenticationError,
+    )
+
+    with patch("cloudheal_control_plane.api.discover_kubernetes_cluster",
+               side_effect=KubernetesAuthenticationError("bad creds")):
+        with TestClient(app) as client:
+            response = client.get("/infrastructure/kubernetes/discovery")
+    assert response.status_code == 401

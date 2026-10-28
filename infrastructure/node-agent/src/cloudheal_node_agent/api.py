@@ -1,4 +1,5 @@
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from uuid import UUID
 
@@ -16,7 +17,10 @@ from cloudheal_node_agent.runtime import (
 )
 from cloudheal_node_agent.workload_models import ContainerRunRequest
 
-CONTROL_PLANE_URL = "http://127.0.0.1:9000"
+CONTROL_PLANE_URL = os.getenv(
+    "CLOUDHEAL_CONTROL_PLANE_URL",
+    "http://127.0.0.1:9000",
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
