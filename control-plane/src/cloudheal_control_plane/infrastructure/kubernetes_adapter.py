@@ -139,6 +139,9 @@ def get_deployment_status(namespace: str, name: str) -> dict:
         "desired_replicas": spec.replicas or 0,
         "ready_replicas": status.ready_replicas or 0,
         "available_replicas": status.available_replicas or 0,
+        "updated_replicas": getattr(status, "updated_replicas", None) or 0,
+        "generation": getattr(getattr(deployment, "metadata", None), "generation", None),
+        "observed_generation": getattr(status, "observed_generation", None),
         "conditions": [
             {
                 "type": condition.type,
@@ -191,3 +194,44 @@ def restart_deployment(namespace: str, name: str) -> dict:
 # Read-only Kubernetes discovery helpers (re-exported for backwards compatibility).
 from .kubernetes_discovery import *  # noqa: F401,F403
 
+
+def is_kubernetes_rollout_in_progress(deployment_status: dict | None) -> bool:
+    """Derive whether Kubernetes is already progressing a rollout.
+
+    A missing or unreadable status is treated conservatively as "in progress"
+    by callers that need to avoid conflicting restarts. This helper itself
+    returns False for missing data so policy callers can distinguish "unknown"
+    from "confirmed progressing" when needed.
+    """
+    if not isinstance(deployment_status, dict):
+        return False
+
+    observed_generation = deployment_status.get("observed_generation")
+    generation = deployment_status.get("generation")
+    if (
+        isinstance(observed_generation, int)
+        and isinstance(generation, int)
+        and observed_generation < generation
+    ):
+        return True
+
+    desired = deployment_status.get("desired_replicas")
+    updated = deployment_status.get("updated_replicas")
+    if isinstance(desired, int) and isinstance(updated, int) and updated < desired:
+        return True
+
+    for condition in deployment_status.get("conditions") or []:
+        if not isinstance(condition, dict):
+            continue
+        if (
+            condition.get("type") == "Progressing"
+            and condition.get("status") == "True"
+        ):
+            reason = condition.get("reason")
+            if reason in {
+                "NewReplicaSetCreated",
+                "ReplicaSetUpdated",
+            }:
+                return True
+
+    return False

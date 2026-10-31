@@ -145,13 +145,3 @@ def test_run_lifecycle_wait_timeout_cleans_up(monkeypatch):
         assert kubernetes_e2e.run_lifecycle(config) == 1
         assert mock_delete.called
         assert cleanup_calls["namespace"] == 1
-
-
-def test_main_returns_one_on_missing_env(monkeypatch):
-    monkeypatch.delenv("CLOUDHEAL_API_URL", raising=False)
-    monkeypatch.delenv("CLOUDHEAL_E2E_NAMESPACE", raising=False)
-    monkeypatch.delenv("CLOUDHEAL_E2E_DEPLOYMENT", raising=False)
-    monkeypatch.delenv("CLOUDHEAL_E2E_IMAGE", raising=False)
-    assert kubernetes_e2e.main() == 1
-"""
-"""

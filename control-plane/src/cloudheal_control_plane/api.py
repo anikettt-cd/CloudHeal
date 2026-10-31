@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -24,6 +25,9 @@ from cloudheal_control_plane.infrastructure.incident_monitor import (
     incident_monitor_loop,
 )
 from cloudheal_control_plane.self_healing.recovery_executor import execute_recovery
+from cloudheal_control_plane.self_healing.recovery_reconciler import (
+    reconcile_recovery_attempts,
+)
 
 from cloudheal_control_plane.infrastructure.kubernetes_adapter import (
     get_deployment_status,
@@ -47,6 +51,7 @@ from cloudheal_control_plane.infrastructure.kubernetes_deployments import (
 )
 
 from cloudheal_control_plane.registry import (
+    NodeIdentityConflictError,
     NodeRecord,
     get_node,
     get_nodes,
@@ -67,6 +72,21 @@ from cloudheal_control_plane.workloads.scheduler import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def is_legacy_workload_reconciliation_enabled() -> bool:
+    """Return whether the legacy Docker workload reconciler should run.
+
+    Kubernetes is authoritative for live Kubernetes workload state. The legacy
+    Docker-oriented reconciler is retained for compatibility but is disabled by
+    default so stale SQLite workload records cannot masquerade as active
+    Kubernetes workloads.
+    """
+
+    return os.getenv(
+        "CLOUDHEAL_LEGACY_WORKLOAD_RECONCILIATION_ENABLED",
+        "false",
+    ).strip().lower() in {"1", "true", "yes", "on"}
 
 
 async def reconciliation_loop():
@@ -91,28 +111,44 @@ async def reconciliation_loop():
 async def lifespan(app: FastAPI):
     initialize_database()
 
-    reconciliation_task = asyncio.create_task(
-        reconciliation_loop(),
-        name="workload-reconciliation",
+    background_tasks = []
+
+    if is_legacy_workload_reconciliation_enabled():
+        background_tasks.append(
+            asyncio.create_task(
+                reconciliation_loop(),
+                name="workload-reconciliation",
+            )
+        )
+
+    background_tasks.append(
+        asyncio.create_task(
+            incident_monitor_loop(),
+            name="incident-monitor",
+        )
     )
 
-    incident_monitor_task = asyncio.create_task(
-        incident_monitor_loop(),
-        name="incident-monitor",
+    async def _recovery_reconciliation_startup() -> None:
+        try:
+            result = await asyncio.to_thread(reconcile_recovery_attempts)
+            print(f"[CloudHeal] Recovery reconciliation: {result}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[CloudHeal] Recovery reconciliation error: {exc}")
+
+    background_tasks.append(
+        asyncio.create_task(
+            _recovery_reconciliation_startup(),
+            name="recovery-reconciliation-startup",
+        )
     )
 
     try:
         yield
     finally:
-        tasks = [
-            reconciliation_task,
-            incident_monitor_task,
-        ]
-
-        for task in tasks:
+        for task in background_tasks:
             task.cancel()
 
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*background_tasks, return_exceptions=True)
 
 app = FastAPI(
     title="CloudHeal Control Plane",
@@ -178,7 +214,13 @@ def health():
 
 @app.post("/nodes/register", response_model=NodeRecord)
 def register(node: NodeRecord):
-    return register_node(node)
+    try:
+        return register_node(node)
+    except NodeIdentityConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
 
 @app.get("/nodes", response_model=list[NodeRecord])

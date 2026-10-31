@@ -10,6 +10,9 @@ def evaluate_recovery_action(
     incident: dict[str, Any] | None,
     action: str,
     recovery_in_progress: bool = False,
+    capacity_available: bool | None = None,
+    capacity_required: bool = False,
+    kubernetes_recovery_in_progress: bool = False,
 ) -> dict[str, Any]:
     """Evaluate whether a proposed recovery action is safe to permit."""
 
@@ -34,6 +37,36 @@ def evaluate_recovery_action(
             "RECOVERY_ALREADY_IN_PROGRESS",
             "A recovery attempt is already in progress.",
         )
+
+    # 2b. Coordinate with Kubernetes-native recovery/restart behavior.
+    if kubernetes_recovery_in_progress:
+        return blocked(
+            "KUBERNETES_RECOVERY_IN_PROGRESS",
+            "Kubernetes is already progressing a recovery or rollout.",
+        )
+
+    # 3. Capacity validation.
+    if capacity_available is False:
+        return blocked(
+            "CAPACITY_INSUFFICIENT",
+            "Insufficient capacity is available for remediation.",
+        )
+    if capacity_required and capacity_available is None:
+        return blocked(
+            "CAPACITY_UNKNOWN",
+            "Capacity information is unavailable; remediation is blocked.",
+        )
+
+    # Deployment restart requires a positive desired replica count.
+    if action == "RESTART_DEPLOYMENT" and isinstance(incident, dict):
+        evidence = incident.get("evidence")
+        if isinstance(evidence, dict):
+            desired = evidence.get("desired_replicas")
+            if isinstance(desired, int) and desired <= 0:
+                return blocked(
+                    "CAPACITY_INSUFFICIENT",
+                    "The deployment has no desired replicas to recover.",
+                )
 
     # 3. Require a valid incident.
     if not isinstance(incident, dict):

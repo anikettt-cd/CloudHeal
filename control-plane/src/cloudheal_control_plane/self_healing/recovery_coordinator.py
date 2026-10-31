@@ -12,6 +12,9 @@ def coordinate_recovery(
     trigger: str = "manual",
     claim_attempt_fn: Callable = claim_recovery_attempt,
     evaluate_policy_fn: Callable = evaluate_recovery_action,
+    capacity_available: bool | None = None,
+    capacity_required: bool = False,
+    kubernetes_recovery_in_progress: bool = False,
 ) -> dict[str, Any]:
     """Validate and claim a recovery attempt without executing remediation."""
 
@@ -49,6 +52,9 @@ def coordinate_recovery(
     policy = evaluate_policy_fn(
         incident=incident,
         action=action,
+        capacity_available=capacity_available,
+        capacity_required=capacity_required,
+        kubernetes_recovery_in_progress=kubernetes_recovery_in_progress,
     )
 
     if not policy["allowed"]:
@@ -78,6 +84,11 @@ def coordinate_recovery(
                 f"kubernetes:deployment:{namespace}:{deployment_name}"
             ),
             "trigger": trigger,
+            "policy": {
+                "allowed": policy["allowed"],
+                "reason_code": policy["reason_code"],
+                "reason": policy["reason"],
+            },
         },
     )
 

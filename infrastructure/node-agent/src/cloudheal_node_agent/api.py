@@ -22,19 +22,41 @@ CONTROL_PLANE_URL = os.getenv(
     "http://127.0.0.1:9000",
 )
 
+async def _register_until_success(control_plane_url: str) -> None:
+    """Register in the background so startup is not blocked by CP availability."""
+    delay_seconds = 2
+
+    while True:
+        try:
+            await asyncio.to_thread(register_with_control_plane, control_plane_url)
+            print("Node registered with CloudHeal Control Plane")
+            return
+        except Exception as exc:  # noqa: BLE001
+            print(f"Node registration failed: {exc}; retrying in {delay_seconds}s")
+
+        await asyncio.sleep(delay_seconds)
+        delay_seconds = min(delay_seconds * 2, 30)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    register_with_control_plane(CONTROL_PLANE_URL)
-
+    registration_task = asyncio.create_task(
+        _register_until_success(CONTROL_PLANE_URL),
+        name="node-registration",
+    )
     heartbeat_task = asyncio.create_task(
-        heartbeat_loop(CONTROL_PLANE_URL)
+        heartbeat_loop(CONTROL_PLANE_URL),
+        name="node-heartbeat",
     )
 
     try:
         yield
     finally:
-        heartbeat_task.cancel()
-        await heartbeat_task
+        for task in (registration_task, heartbeat_task):
+            task.cancel()
+        await asyncio.gather(
+            registration_task, heartbeat_task, return_exceptions=True
+        )
 
 
 app = FastAPI(

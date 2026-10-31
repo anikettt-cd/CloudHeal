@@ -1,3 +1,6 @@
+import pytest
+
+
 from datetime import datetime, timezone , timedelta
 from uuid import uuid4
 import json
@@ -232,3 +235,139 @@ def test_repeated_healthy_heartbeats_do_not_duplicate_recovery_events():
         ).fetchone()[0]
 
     assert count == 1
+def test_same_node_id_registered_twice_updates_one_record():
+    node = make_node()
+
+    first = register_node(node)
+    second_node = NodeRecord(
+        node_id=node.node_id,
+        hostname="updated-host",
+        address="10.0.0.2",
+        system_info={"cpu_count": 8},
+        runtime_info={"available": True},
+    )
+    second = register_node(second_node)
+
+    assert first.node_id == second.node_id
+    assert len(get_nodes()) == 1
+
+    stored = get_node(node.node_id)
+    assert stored is not None
+    assert stored.hostname == "updated-host"
+    assert stored.address == "10.0.0.2"
+
+
+def test_different_node_ids_same_hostname_and_address_are_rejected():
+    from cloudheal_control_plane.registry import NodeIdentityConflictError
+
+    first = make_node()
+    register_node(first)
+
+    conflicting = NodeRecord(
+        node_id=str(uuid4()),
+        hostname=first.hostname,
+        address=first.address,
+        system_info={"cpu_count": 2},
+        runtime_info={"available": False},
+    )
+
+    with pytest.raises(NodeIdentityConflictError):
+        register_node(conflicting)
+
+    assert len(get_nodes()) == 1
+
+
+def test_rejected_registration_does_not_modify_original_record():
+    from cloudheal_control_plane.registry import NodeIdentityConflictError
+
+    first = make_node()
+    register_node(first)
+
+    original = get_node(first.node_id)
+
+    conflicting = NodeRecord(
+        node_id=str(uuid4()),
+        hostname=first.hostname,
+        address=first.address,
+        system_info={"cpu_count": 99},
+        runtime_info={"available": False},
+    )
+
+    with pytest.raises(NodeIdentityConflictError):
+        register_node(conflicting)
+
+    after = get_node(first.node_id)
+    assert after == original
+
+
+def test_same_node_id_can_update_address():
+    node = make_node()
+    register_node(node)
+
+    updated = NodeRecord(
+        node_id=node.node_id,
+        hostname=node.hostname,
+        address="192.168.1.5",
+        system_info=node.system_info,
+        runtime_info=node.runtime_info,
+    )
+    register_node(updated)
+
+    stored = get_node(node.node_id)
+    assert stored is not None
+    assert stored.address == "192.168.1.5"
+    assert len(get_nodes()) == 1
+
+
+def test_same_hostname_different_addresses_allowed():
+    first = make_node()
+    first.hostname = "shared-host"
+    first.address = "10.0.0.1"
+    register_node(first)
+
+    second = make_node()
+    second.hostname = "shared-host"
+    second.address = "10.0.0.2"
+    register_node(second)
+
+    assert len(get_nodes()) == 2
+
+
+def test_different_hostnames_same_address_allowed():
+    first = make_node()
+    first.hostname = "host-a"
+    first.address = "10.0.0.1"
+    register_node(first)
+
+    second = make_node()
+    second.hostname = "host-b"
+    second.address = "10.0.0.1"
+    register_node(second)
+
+    assert len(get_nodes()) == 2
+
+def test_register_node_conflict_returns_409():
+    from fastapi.testclient import TestClient
+
+    from cloudheal_control_plane.api import app
+
+    first = make_node()
+    register_node(first)
+
+    conflicting = NodeRecord(
+        node_id=str(uuid4()),
+        hostname=first.hostname,
+        address=first.address,
+        system_info={"cpu_count": 2},
+        runtime_info={"available": False},
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/nodes/register",
+            json=conflicting.model_dump(mode="json"),
+        )
+
+    assert response.status_code == 409
+    assert "already owns" in response.json()["detail"]
+

@@ -45,6 +45,13 @@ def test_claims_recovery_without_executing_it():
             "deployment": "test-api",
             "resource_key": "kubernetes:deployment:default:test-api",
             "trigger": "manual",
+            "policy": {
+                "allowed": True,
+                "reason_code": "POLICY_APPROVED",
+                "reason": (
+                    "The action passed the current recovery policy checks."
+                ),
+            },
         },
     )
 

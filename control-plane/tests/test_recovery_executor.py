@@ -81,7 +81,7 @@ def test_restart_exception_keeps_outcome_unknown(_claim):
 
     assert result["status"] == "UNKNOWN"
     assert result["execution_started"] is False
-    status.assert_not_called()
+    status.assert_called_once_with("cloudheal-test", "demo")
     assert finish.call_args.kwargs["status"] == "UNKNOWN"
 
 
@@ -138,15 +138,21 @@ def test_degraded_deployment_is_recorded_as_failed(_claim):
     return_value={"accepted": False, "reason_code": "TEST_STOP"},
 )
 def test_automatic_trigger_is_forwarded_to_coordinator(mock_coordinator):
+    status = Mock(return_value=healthy_status())
+
     result = execute_recovery(
         make_detection(),
         trigger="automatic",
+        get_status_fn=status,
     )
 
     assert result["accepted"] is False
     mock_coordinator.assert_called_once_with(
         make_detection(),
         trigger="automatic",
+        capacity_available=None,
+        capacity_required=False,
+        kubernetes_recovery_in_progress=False,
     )
 
 
@@ -189,5 +195,5 @@ def test_degraded_deployment_stops_verifying_at_deadline():
 
     assert result["status"] == "FAILED"
     assert clock.now == 5.0
-    assert status.call_count == 4
+    assert status.call_count == 5
     assert finish.call_args.kwargs["status"] == "FAILED"

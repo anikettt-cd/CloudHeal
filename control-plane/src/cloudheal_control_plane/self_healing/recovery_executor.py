@@ -7,6 +7,7 @@ from cloudheal_control_plane.database import finish_recovery_attempt
 from cloudheal_control_plane.infrastructure.kubernetes_adapter import (
     restart_deployment,
     get_deployment_status,
+    is_kubernetes_rollout_in_progress,
 )
 from cloudheal_control_plane.self_healing.recovery_coordinator import (
     coordinate_recovery,
@@ -23,18 +24,41 @@ def execute_recovery(
     poll_interval_seconds: float = 2.0,
     sleep_fn: Callable = time.sleep,
     monotonic_fn: Callable = time.monotonic,
+    capacity_available: bool | None = None,
+    capacity_required: bool = False,
+    is_rollout_in_progress_fn: Callable = is_kubernetes_rollout_in_progress,
 ) -> dict[str, Any]:
     """Claim, execute, verify, and persist one approved recovery attempt."""
 
-    claim = coordinate_recovery(detection, trigger=trigger)
+    namespace = detection["namespace"]
+    deployment = detection["deployment"]
+
+    # Derive Kubernetes-native rollout state before claiming recovery. A
+    # restart must not conflict with a rollout Kubernetes is already
+    # progressing. Unavailable status is treated conservatively.
+    kubernetes_recovery_in_progress = False
+    try:
+        preflight_status = get_status_fn(namespace, deployment)
+        kubernetes_recovery_in_progress = bool(
+            is_rollout_in_progress_fn(preflight_status)
+        )
+    except Exception:
+        kubernetes_recovery_in_progress = True
+
+    claim = coordinate_recovery(
+        detection,
+        trigger=trigger,
+        capacity_available=capacity_available,
+        capacity_required=capacity_required,
+        kubernetes_recovery_in_progress=kubernetes_recovery_in_progress,
+    )
 
     if not claim["accepted"]:
         return claim
 
     attempt_id = claim["attempt_id"]
-    namespace = detection["namespace"]
-    deployment = detection["deployment"]
 
+    started_at = monotonic_fn()
     try:
         restart_result = restart_fn(namespace, deployment)
         claim["execution_started"] = True
@@ -111,6 +135,7 @@ def execute_recovery(
             "deployment": deployment,
             "restart_result": restart_result,
             "verification": current,
+            "duration_seconds": monotonic_fn() - started_at,
         },
     )
 

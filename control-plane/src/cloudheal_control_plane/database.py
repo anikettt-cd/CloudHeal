@@ -336,6 +336,10 @@ def claim_recovery_attempt(
     incident_id: int,
     action: str,
     details: dict | None = None,
+    max_attempts: int | None = None,
+    cooldown_seconds: float | None = None,
+    backoff_multiplier: float | None = None,
+    max_cooldown_seconds: float | None = None,
 ) -> dict:
     """Atomically claim a recovery attempt for an open incident."""
 
@@ -381,6 +385,20 @@ def claim_recovery_attempt(
                 "reason_code": "RECOVERY_ALREADY_ACTIVE",
                 "attempt_id": active_attempt["attempt_id"],
             }
+
+        limit_result = _recovery_claim_limits(
+            connection, incident_id, max_attempts, cooldown_seconds,
+            backoff_multiplier, max_cooldown_seconds,
+        )
+        if limit_result is not None:
+            return limit_result
+        limit_result = _recovery_claim_limits(
+            connection, incident_id, max_attempts, cooldown_seconds,
+            backoff_multiplier, max_cooldown_seconds,
+        )
+        if limit_result is not None:
+            return limit_result
+
 
         # Automatic recovery is limited to one attempt per incident.
         # Check persisted attempt details so this guard survives restarts.
@@ -644,3 +662,61 @@ def list_incident_history(limit: int = 50) -> list[dict]:
             history.append(incident)
 
         return history
+
+
+def _recovery_claim_limits(
+    connection,
+    incident_id,
+    max_attempts,
+    cooldown_seconds,
+    backoff_multiplier,
+    max_cooldown_seconds,
+):
+    if max_attempts is None:
+        raw = os.getenv("CLOUDHEAL_RECOVERY_MAX_ATTEMPTS", "3").strip()
+        try:
+            max_attempts = int(raw)
+        except ValueError:
+            max_attempts = 3
+    if cooldown_seconds is None:
+        raw = os.getenv("CLOUDHEAL_RECOVERY_COOLDOWN_SECONDS", "0").strip()
+        try:
+            cooldown_seconds = float(raw)
+        except ValueError:
+            cooldown_seconds = 0.0
+    if backoff_multiplier is None:
+        raw = os.getenv("CLOUDHEAL_RECOVERY_BACKOFF_MULTIPLIER", "2").strip()
+        try:
+            backoff_multiplier = float(raw)
+        except ValueError:
+            backoff_multiplier = 2.0
+    if max_cooldown_seconds is None:
+        raw = os.getenv("CLOUDHEAL_RECOVERY_MAX_COOLDOWN_SECONDS", "3600").strip()
+        try:
+            max_cooldown_seconds = float(raw)
+        except ValueError:
+            max_cooldown_seconds = 3600.0
+    rows = connection.execute("SELECT started_at, updated_at, finished_at FROM recovery_attempts WHERE incident_id = ?", (incident_id,)).fetchall()
+    if max_attempts and len(rows) >= max_attempts:
+        return {"claimed": False, "reason_code": "RECOVERY_ATTEMPT_LIMIT_REACHED", "attempt_count": len(rows), "max_attempts": max_attempts}
+    if cooldown_seconds and rows:
+        timestamps = []
+        for row in rows:
+            for field in ("started_at", "updated_at", "finished_at"):
+                value = row[field]
+                if value:
+                    try:
+                        timestamps.append(datetime.fromisoformat(value))
+                    except ValueError:
+                        pass
+        if timestamps:
+            last_attempt_at = max(timestamps)
+            multiplier = backoff_multiplier if backoff_multiplier and backoff_multiplier > 1 else 1.0
+            effective_cooldown = min(max_cooldown_seconds, cooldown_seconds * (multiplier ** (len(rows) - 1)))
+            now = datetime.now(UTC)
+            if last_attempt_at.tzinfo is None:
+                last_attempt_at = last_attempt_at.replace(tzinfo=timezone.utc)
+            elapsed = (now - last_attempt_at).total_seconds()
+            if elapsed < effective_cooldown:
+                return {"claimed": False, "reason_code": "RECOVERY_COOLDOWN_ACTIVE", "retry_after_seconds": effective_cooldown - elapsed}
+    return None

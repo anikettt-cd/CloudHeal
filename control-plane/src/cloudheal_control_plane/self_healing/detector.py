@@ -48,11 +48,25 @@ def detect_deployment_incident(
     if unhealthy_pods:
         reasons.append("UNHEALTHY_PODS_PRESENT")
 
+    max_restart_count = 0
+    for pod in deployment["pods"]:
+        for container in pod.get("containers", []):
+            max_restart_count = max(
+                max_restart_count,
+                int(container.get("restart_count") or 0),
+            )
+
+    crash_loop_detected = max_restart_count >= 5
+    if crash_loop_detected:
+        reasons.append("CRASH_LOOP_DETECTED")
+
     evidence = {
         "desired_replicas": desired,
         "ready_replicas": ready,
         "available_replicas": available,
         "unhealthy_pods": unhealthy_pods,
+        "max_restart_count": max_restart_count,
+        "crash_loop_detected": crash_loop_detected,
         "reasons": reasons,
     }
 

@@ -77,20 +77,36 @@ def is_auto_recovery_enabled() -> bool:
 async def incident_monitor_loop() -> None:
     """Periodically inspect configured Deployments and record incidents."""
 
-    logger.warning(
-        "Incident monitor started: targets=%s interval_seconds=%s",
-        get_monitor_targets(),
-        get_monitor_interval(),
-    )
+    configured_targets = get_monitor_targets()
+
+    if configured_targets:
+        logger.info(
+            "Incident monitor started: targets=%s interval_seconds=%s",
+            configured_targets,
+            get_monitor_interval(),
+        )
+    else:
+        logger.info(
+            "Incident monitor started with no configured targets; "
+            "Kubernetes monitoring is not configured. "
+            "Set CLOUDHEAL_MONITOR_TARGETS to namespace/deployment pairs "
+            "to enable monitoring. interval_seconds=%s",
+            get_monitor_interval(),
+        )
     attempted_incident_ids: set[int] = set()
     while True:
         try:
             targets = get_monitor_targets()
 
-            logger.warning(
-                "Incident monitor cycle: targets=%s",
-                targets,
-            )
+            if targets:
+                logger.debug(
+                    "Incident monitor cycle: targets=%s",
+                    targets,
+                )
+            else:
+                logger.debug(
+                    "Incident monitor cycle: no targets configured"
+                )
 
             for namespace, deployment_name in targets:
                 try:

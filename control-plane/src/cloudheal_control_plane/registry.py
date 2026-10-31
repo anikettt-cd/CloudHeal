@@ -7,6 +7,10 @@ from pydantic import BaseModel, Field
 from cloudheal_control_plane.database import get_connection
 
 
+class NodeIdentityConflictError(Exception):
+    """Raised when another node ID already owns a hostname/address pair."""
+
+
 HEARTBEAT_TIMEOUT_SECONDS = 30
 
 
@@ -69,11 +73,64 @@ def _save_node(node: NodeRecord) -> None:
 
 
 def register_node(node: NodeRecord) -> NodeRecord:
-    """Register a node or update its existing record."""
+    """Register a node or update its existing record.
+
+    A node_id may update its own hostname or address. A different node_id may
+    not reuse both the hostname and address of an existing node.
+    """
     node.last_seen = datetime.now(timezone.utc)
     node.status = "healthy"
 
-    _save_node(node)
+    with get_connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+
+        conflict = connection.execute(
+            """
+            SELECT node_id
+            FROM nodes
+            WHERE hostname = ?
+              AND address = ?
+              AND node_id != ?
+            """,
+            (node.hostname, node.address, node.node_id),
+        ).fetchone()
+
+        if conflict is not None:
+            raise NodeIdentityConflictError(
+                "Another node ID already owns the "
+                f"hostname/address combination: {node.hostname}/{node.address}"
+            )
+
+        connection.execute(
+            """
+            INSERT INTO nodes (
+                node_id,
+                hostname,
+                address,
+                status,
+                last_seen,
+                system_info,
+                runtime_info
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(node_id) DO UPDATE SET
+                hostname = excluded.hostname,
+                address = excluded.address,
+                status = excluded.status,
+                last_seen = excluded.last_seen,
+                system_info = excluded.system_info,
+                runtime_info = excluded.runtime_info
+            """,
+            (
+                node.node_id,
+                node.hostname,
+                node.address,
+                node.status,
+                node.last_seen.isoformat(),
+                json.dumps(node.system_info),
+                json.dumps(node.runtime_info),
+            ),
+        )
 
     return node
 
