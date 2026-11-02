@@ -1,280 +1,287 @@
-☁️ CloudHeal
+<div align="center">
 
-Intelligent Private Cloud Management & Self-Healing Infrastructure Platform
+# ☁️ CloudHeal
 
-<p align="center">
-  <strong>Monitor. Detect. Recover. Verify.</strong>
-  <br/>
-  Building a resilient private cloud with Kubernetes-native orchestration and intelligent infrastructure management.
-</p>
+### Infrastructure that notices when it breaks, and proves it got better.
 
-⸻
+**Monitor · Detect · Recover · Verify**
 
-🚀 Overview
+A Kubernetes-native intelligence layer for private clouds: host and workload monitoring, incident detection, safety-gated recovery coordination, and independent verification.
 
-CloudHeal is a cloud-agnostic private-cloud management and self-healing platform designed to monitor infrastructure, detect failures, coordinate recovery, and improve workload reliability.
+<br/>
 
-Built around Kubernetes, CloudHeal adds an infrastructure intelligence and recovery coordination layer on top of standard container orchestration.
+![Python](https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-Control%20Plane-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![K3s](https://img.shields.io/badge/K3s-Kubernetes-FFC61C?style=for-the-badge&logo=k3s&logoColor=black)
+![Tailscale](https://img.shields.io/badge/Tailscale-Private%20Mesh-242424?style=for-the-badge&logo=tailscale&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-Persistence-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
+![pytest](https://img.shields.io/badge/tests-pytest-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)
+![Status](https://img.shields.io/badge/status-active%20development-orange?style=for-the-badge)
 
-Instead of reinventing Kubernetes, CloudHeal works alongside it:
+</div>
 
-* Kubernetes handles container scheduling, workload lifecycle, and orchestration.
-* CloudHeal monitors infrastructure and workload health.
-* CloudHeal detects and classifies infrastructure incidents.
-* Its recovery system is designed to apply deterministic safety policies before coordinating recovery.
-* Recovery outcomes can be independently verified.
+---
 
-The long-term goal is to make private-cloud infrastructure more observable, resilient, and easier to manage.
+## ⚡ The Idea in 30 Seconds
 
-🎯 Why CloudHeal?
+Kubernetes is excellent at replacing failed pods. But when a node drops off the network, operators still need answers:
 
-Infrastructure failures can happen for many reasons:
+> *What failed? Why? Was it safe to act? **Did recovery actually work?***
 
-* Worker nodes going offline.
-* Network connectivity interruptions.
-* Unhealthy workloads.
-* Deployment availability problems.
-* Infrastructure resource exhaustion.
+**CloudHeal answers those questions.** It does not compete with Kubernetes. It extends it with infrastructure-independent monitoring, incident management, safety policies, and verification.
 
-Traditional orchestration can handle many workload-level failures, but infrastructure operators also need visibility into what happened, why it happened, and whether recovery actually succeeded.
+| Kubernetes handles | CloudHeal adds |
+|---|---|
+| Scheduling & pod lifecycle | Physical-host visibility through Node Agents |
+| Deployment reconciliation & replicas | Incident detection, classification & durable history |
+| Service discovery & networking | Policy and safety evaluation before any action |
+| Native workload replacement | **Independent verification that recovery really succeeded** |
 
-CloudHeal aims to bridge that gap through infrastructure monitoring, incident management, and controlled recovery coordination.
+> **Architecture principle:** Kubernetes remains the authoritative orchestration system. CloudHeal never rebuilds the scheduler, reconciliation loop, or replica management.
 
-🏗️ Architecture
+---
 
-CloudHeal follows a modular architecture with three major components.
+## ✨ Highlights
 
-1. CloudHeal Control Plane
+- 🫀 **Node Agents** report CPU, memory, disk, OS, runtime and network info, plus heartbeats, from physical hosts (including Windows)
+- ☸️ **Kubernetes discovery** of nodes, namespaces, pods, deployments and services, with safe partial-failure handling
+- 🚨 **Incident detection & persistence** backed by SQLite
+- 🛡️ **Deterministic safety gate**: recovery targets are validated and actions authorized before anything runs
+- ✅ **Independent verification**: a successful API call is not proof the app is healthy
+- 🔬 **Separated health signals**: host connected, K3s joined, node Ready, node validated and workload healthy are never collapsed into one status
+- 🧠 **AI is optional**: the system works fully with no LLM available
+- 🔒 **Automatic recovery is OFF by default**
 
-The central management and coordination layer.
+---
 
-Responsibilities:
+## 🏗️ Architecture
 
-* Node registration and identity validation.
-* Heartbeat monitoring.
-* Infrastructure health monitoring.
-* Kubernetes workload discovery.
-* Incident detection and classification.
-* Incident persistence.
-* Recovery policy and safety evaluation.
-* Recovery coordination.
-* Post-recovery verification.
+```mermaid
+flowchart TD
+    A[Physical Hosts] --> B[CloudHeal Node Agents]
+    B -- heartbeats + host telemetry --> C[CloudHeal Control Plane]
+    K[Kubernetes API] -- discovery --> C
+    C --> D[Health Monitoring]
+    D --> E[Incident Detection]
+    E --> F[Incident Classification]
+    F --> G{Safety / Policy Gate}
+    G -- approved --> H[Recovery Coordination]
+    G -- blocked --> I[Logged and surfaced]
+    H --> J[Kubernetes / Provider]
+    J --> L[Independent Verification]
+    L --> C
+```
 
-2. CloudHeal Node Agent
+### Three layers, clear responsibilities
 
-A lightweight agent designed to run on infrastructure hosts.
+<table>
+<tr>
+<td width="33%" valign="top">
 
-Responsibilities:
+#### 🧭 Control Plane
+*Python · FastAPI · SQLite*
 
-* Host registration.
-* Periodic heartbeats.
-* Host identity reporting.
-* CPU and memory monitoring.
-* Disk and operating-system information.
-* Runtime and network information.
+- Node registration & validation
+- Heartbeat processing
+- Kubernetes integration & discovery
+- Workload inspection
+- Incident detection & persistence
+- Recovery coordination & verification
+- Background monitoring
 
-3. Kubernetes / K3s Infrastructure
+</td>
+<td width="33%" valign="top">
 
-Kubernetes provides the underlying orchestration capabilities.
+#### 🤖 Node Agent
+*Python · cross-platform*
 
-Responsibilities:
+- Host identity
+- CPU, memory & disk info
+- OS & runtime discovery
+- Network & Tailscale address discovery
+- Registration & heartbeats
 
-* Container lifecycle management.
-* Pod scheduling.
-* Deployment reconciliation.
-* Replica management.
-* Service networking.
-* Workload rescheduling.
-* Node health and lifecycle management.
+*Reports the physical host. It does not join the machine to Kubernetes.*
 
-Architecture principle: Kubernetes remains the authoritative orchestration system. CloudHeal adds monitoring, incident intelligence, and recovery coordination.
+</td>
+<td width="33%" valign="top">
 
-🔄 How CloudHeal Works
-
-         Infrastructure Hosts
-                  |
-                  v
-          CloudHeal Node Agents
-                  |
-             Heartbeats
-                  |
-                  v
-          CloudHeal Control Plane
-                  |
-          Health Monitoring
-                  |
-                  v
-           Incident Detection
-                  |
-                  v
-          Incident Classification
-                  |
-                  v
-           Safety / Policy Gate
-                  |
-                  v
-         Recovery Coordination
-                  |
-                  v
-          Kubernetes / Provider
-                  |
-                  v
-          Recovery Verification
-
-The recovery architecture is designed around deterministic safety controls. AI-assisted diagnosis and planning are planned as optional capabilities, not prerequisites for reliable operation.
-
-🧪 Live Infrastructure Demonstration
-
-CloudHeal is being developed and tested using a private multi-laptop K3s cluster connected through Tailscale.
-
-Test Environment
-
-Machine	Role	Environment
-MacBook	K3s control plane and CloudHeal Control Plane	Ubuntu Multipass
-Windows Laptop 1	Kubernetes worker	Ubuntu WSL2
-Windows Laptop 2	Kubernetes worker	Ubuntu WSL2
-
-Workload Failover Test
-
-A video-streaming website is deployed inside the private Kubernetes cluster.
-
-The failover demonstration follows this sequence:
-
-1. Deploy the website on a preferred worker.
-2. Verify that the website is accessible over the private network.
-3. Stop the worker’s K3s Agent to simulate worker failure.
-4. Kubernetes detects the node failure.
-5. The Deployment becomes eligible for scheduling on another available worker.
-6. Kubernetes creates a replacement Pod on the Mac worker.
-7. Verify that the website remains accessible.
-8. Restart the disconnected worker.
-9. Verify that Kubernetes can schedule the workload back onto the preferred worker.
-
-Important: Kubernetes performs the actual Pod rescheduling. CloudHeal independently monitors workload health and detects incidents. Automatic CloudHeal recovery remains disabled during this demonstration.
-
-This test demonstrates Kubernetes-native workload resilience alongside CloudHeal’s monitoring capabilities.
-
-🛠️ Technology Stack
-
-Category	Technologies
-Backend	Python
-API Framework	FastAPI / Starlette
-Infrastructure Orchestration	Kubernetes, K3s
-Container Runtime	containerd
-Infrastructure Agents	Python
-Networking	Tailscale
-Testing	pytest
-Package Management	uv
-Version Control	Git, GitHub
-
-The stack reflects the technologies used or integrated in the current development environment.
-
-🛡️ Design Principles
-
-CloudHeal is being developed with the following principles:
-
-1. Kubernetes-Native
-
-Use Kubernetes APIs and reconciliation instead of implementing a competing orchestration engine.
-
-2. Cloud-Agnostic
-
-Keep infrastructure integrations modular so the platform can support different private-cloud environments.
-
-3. Safety First
-
-Recovery actions must pass deterministic policy and safety checks.
-
-4. Observable Infrastructure
-
-Maintain visibility into nodes, workloads, incidents, and recovery outcomes.
-
-5. Independent Recovery Verification
-
-A recovery action is not considered successful merely because it was initiated. The resulting infrastructure and workload state must be checked.
-
-6. AI as an Optional Intelligence Layer
-
-AI may assist with diagnosis and recovery planning, but critical infrastructure decisions remain controlled by deterministic safeguards.
-
-🗺️ Development Roadmap
-
-CloudHeal is actively under development.
-
-Phase	Focus	Status
-Phase 1	Core project foundation	Completed
-Phase 2	Control Plane and Node Agent foundations	Completed
-Phase 3	Repeatability and testing	Completed
-Phase 4	Windows worker integration	Functionally completed
-Phase 5	Multi-laptop private-cloud integration	In progress
-Phase 6	Kubernetes RBAC and access control	Planned
-Phase 7	Recovery safety and policy enforcement	Planned
-Phase 8	Operational reliability and verification	Planned
-Future	AI-assisted incident diagnosis and recovery planning	Planned
-
-Roadmap statuses will evolve as implementation and validation progress.
-
-🔐 Safety & Reliability
-
-CloudHeal is designed with infrastructure safety in mind.
-
-* Automatic recovery is disabled by default.
-* Recovery actions require explicit safety evaluation.
-* Kubernetes remains responsible for standard workload reconciliation.
-* AI is not required for core infrastructure operation.
-* Recovery results must be independently verified.
-* Infrastructure changes should be auditable.
-
-💻 Getting Started
-
-CloudHeal is currently an active development project.
-
-To explore the codebase:
-
+#### ☸️ Kubernetes / K3s
+*The orchestration foundation*
+
+- Container lifecycle
+- Pod scheduling
+- Deployment reconciliation
+- Replica management
+- Service networking
+- Workload replacement & rescheduling
+
+</td>
+</tr>
+</table>
+
+### 🔬 Five signals, never one
+
+A machine can be registered with CloudHeal without joining Kubernetes, and a Kubernetes node can exist without a CloudHeal agent. So CloudHeal tracks them separately:
+
+| Signal | Meaning |
+|---|---|
+| CloudHeal Node Agent connected | The physical machine can talk to CloudHeal |
+| K3s Agent connected | The machine's Kubernetes environment joined the cluster |
+| Kubernetes Node `Ready` | Kubernetes considers the node healthy |
+| CloudHeal node validated | CloudHeal's additional checks passed |
+| Workload healthy | The application passed its health checks |
+
+---
+
+## 🧪 The Test Bed: A Real Three-Laptop Private Cloud
+
+CloudHeal is built and tested on a **real multi-machine K3s cluster connected over Tailscale**, not a single-box simulation.
+
+| Machine | Role | Environment |
+|---|---|---|
+| 🍎 MacBook | K3s server + CloudHeal Control Plane | macOS, K3s in a Multipass Ubuntu VM |
+| 🪟 Windows laptop 1 | Kubernetes worker | Ubuntu on WSL2 |
+| 🪟 Windows laptop 2 (Lenovo) | Kubernetes worker | Ubuntu on WSL2 |
+
+The three-machine topology is configured and both workers have joined the cluster. Coordinated three-device validation is the current focus.
+
+### 🎬 Demonstrated: Kubernetes-native worker failover
+
+A video-streaming website runs inside the cluster, exposed privately through **Traefik** over Tailscale.
+
+```text
+ 1. Website deployed on the worker (nginx, ConfigMap + Deployment + Service + Ingress)
+ 2. Website reachable over the private network
+ 3. Worker's K3s agent stopped  ->  simulated node failure
+ 4. Kubernetes marks the node NotReady
+ 5. Kubernetes creates a replacement Pod on the Mac node
+ 6. Service endpoint updates automatically
+ 7. curl returns HTTP/1.1 200 OK
+```
+
+> **Honest by design:** Kubernetes performed the replacement. CloudHeal automatic recovery was disabled during this test. CloudHeal's own incident detection and persistence for this failure are the next items being verified, because CloudHeal never claims credit for a recovery Kubernetes performed on its own.
+
+---
+
+## 🛡️ Safety Principles
+
+1. **Kubernetes-native.** Use the Kubernetes API; never reinvent orchestration.
+2. **Infrastructure-independent.** K3s is the first target, but standard Kubernetes interfaces are preferred over K3s-specific behavior.
+3. **Deterministic safety before AI autonomy.** AI must never bypass policy, target validation or authorization.
+4. **Observation and mutation stay separate.** Read-only discovery, workload mutation and incident recovery are distinct paths.
+5. **Verify, don't assume.** An incident resolves only after verification succeeds.
+6. **Evidence over demos.** Production readiness is established by evidence, not by successful demonstrations.
+
+**GKE** serves as CloudHeal's primary operational reference for node health, auto-repair, failure detection, workload protection and auditability, adapted to private-cloud realities.
+
+---
+
+## ✅ Validation Status
+
+| Area | Status |
+|---|---|
+| Kubernetes discovery safety (empty-selector guard) | ✅ Tested |
+| Partial discovery with per-category errors | ✅ Tested |
+| Windows Node Agent portability | ✅ Tested |
+| Automated suites (previously reported) | ✅ Control Plane 157 · Node Agent 14 · E2E 9 |
+| Live Deployment + Service lifecycle on K3s | ✅ Passed |
+| Windows host registered with CloudHeal | ✅ Passed |
+| Windows WSL2 worker joined K3s | ✅ Passed |
+| Kubernetes-native failover + HTTP 200 | ✅ Demonstrated |
+| Three-device coordinated validation | 🚧 In progress |
+| CloudHeal incident detection & persistence on live failure | 🔎 Being verified |
+| Cross-node Pod networking on all workers | 📋 Pending |
+| CloudHeal manual & automatic recovery | 📋 Pending (auto disabled) |
+| Least-privilege Kubernetes access | 📋 Pending |
+| Production readiness | ⛔ Not yet established |
+
+---
+
+## 🗺️ Roadmap
+
+| Phase | Focus | Status |
+|---|---|---|
+| 1 | Control Plane & Node Agent foundations | ✅ Done |
+| 2 | Kubernetes integration & workload lifecycle | ✅ Done |
+| 3 | Repeatability & E2E testing | ✅ Complete |
+| 4 | Kubernetes-backed private-cloud foundation | 🚧 In progress |
+| 5 | Incident & recovery validation | ⏭️ Next |
+| 6 | Multi-laptop private cloud | 🚧 Onboarded, validation pending |
+| 7 | Node Agent integration | 🚧 Partially validated |
+| 8 | Least-privilege Kubernetes security (RBAC) | 📋 Planned |
+| 9 | Recovery safety & failure-mode testing | 📋 Planned |
+| 10 | Control Plane operational reliability | 📋 Planned |
+| 11 | Production readiness | 📋 Planned |
+| 12 | AI-assisted incident diagnosis | 🔮 Deferred |
+| 13 | Multi-provider infrastructure support | 🔮 Deferred |
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Language | Python |
+| API | FastAPI / Starlette |
+| Orchestration | Kubernetes (K3s), Kubernetes Python client |
+| Runtime | containerd |
+| Ingress | Traefik |
+| Persistence | SQLite |
+| Networking | Tailscale |
+| Dev environment | macOS, Multipass, WSL2 |
+| Testing & tooling | pytest, uv, Git, GitHub |
+
+---
+
+## 🚀 Getting Started
+
+```bash
 git clone https://github.com/anikettt-cd/CloudHeal.git
 cd CloudHeal
 
-Install the Python environment using uv:
+uv sync          # install the environment
+uv run pytest    # run the tests
+```
 
-uv sync
+Point a Node Agent at a Control Plane with:
 
-Run the project tests:
+```bash
+export CLOUDHEAL_CONTROL_PLANE_URL="http://<control-plane-tailscale-ip>:9000"
+uv run --package cloudheal-node-agent cloudheal-node-agent
+```
 
-uv run pytest
+Useful Control Plane settings:
 
-Individual workspace packages and services may have their own execution commands and environment requirements.
+| Variable | Purpose |
+|---|---|
+| `CLOUDHEAL_DB_PATH` | SQLite database location |
+| `CLOUDHEAL_MONITOR_TARGETS` | Workloads to monitor, e.g. `namespace/deployment` |
+| `CLOUDHEAL_MONITOR_INTERVAL_SECONDS` | Monitoring interval |
+| `CLOUDHEAL_AUTO_RECOVERY_ENABLED` | Keep `false` unless you explicitly intend otherwise |
 
-Note: A complete standalone deployment guide is still part of the project’s ongoing development.
+> A complete standalone deployment guide is still in progress.
 
-🔮 Future Vision
+---
 
-The long-term vision for CloudHeal is to evolve into an intelligent private-cloud operations platform featuring:
+## 🔮 Where This Is Going
 
-* Advanced infrastructure observability.
-* Automated incident correlation.
-* Policy-driven infrastructure recovery.
-* Node lifecycle management.
-* Workload protection and availability management.
-* Provider-specific infrastructure adapters.
-* AI-assisted incident diagnosis.
-* Intelligent recovery planning.
-* Recovery audit trails and verification.
+Not just restarting failed workloads, but infrastructure that can **understand** failures, **coordinate** safe recovery, and **verify** that services returned to health: advanced observability, incident correlation, policy-driven recovery, node lifecycle management, provider adapters, and optional AI-assisted diagnosis, all subordinate to deterministic safeguards.
 
-The objective is not simply to restart failed workloads, but to build infrastructure that can understand failures, coordinate safe recovery, and verify that services return to a healthy state.
+---
 
-👨‍💻 Author
+## 👨‍💻 Author
 
-Aniket Saini
+**Aniket Saini**: IT Engineering student · Backend & Applied AI Engineering
 
-Information Technology Engineering Student | Backend & Applied AI Engineering
+[![GitHub](https://img.shields.io/badge/GitHub-anikettt--cd-181717?style=flat-square&logo=github)](https://github.com/anikettt-cd)
 
-* GitHub: @anikettt-cd
-* Project: CloudHeal
+---
 
-⸻
+<div align="center">
 
-<p align="center">
-  <strong>CloudHeal — Building Infrastructure That Can Recover.</strong>
-  <br/>
-  <sub>Designed for resilience. Built around Kubernetes. Evolving toward intelligent infrastructure operations.</sub>
-</p>
+**CloudHeal: Building Infrastructure That Can Recover.**
+
+<sub>Designed for resilience · Built around Kubernetes · Evolving toward intelligent infrastructure operations</sub>
+
+</div>
